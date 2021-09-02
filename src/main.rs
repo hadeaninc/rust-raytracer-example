@@ -22,6 +22,50 @@ const WIDTH: usize = 1280;
 const HEIGHT: usize = 720;
 const SAMPLES_PER_PIXEL: u32 = 128;
 
+mod parallel {
+    use futures::executor::ThreadPool;
+    use futures::task::SpawnExt;
+    use serde::Serialize;
+    use serde::de::DeserializeOwned;
+    use std::future::Future;
+    use std::pin::Pin;
+
+    use unsafe_indirect_interface::pool::HadeanPool;
+
+    // TODO: I think we want ATCs here to be able to use Future as an associated type and then use it
+    // in the return type of execute
+    pub trait ParallelExecutor {
+        fn execute<
+            T: Serialize + DeserializeOwned + Send + Unpin + 'static,
+            R: Serialize + DeserializeOwned + Send + Unpin + 'static,
+        >(&mut self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>>;
+    }
+
+    impl ParallelExecutor for ThreadPool {
+        fn execute<
+            T: Serialize + DeserializeOwned + Send + Unpin + 'static,
+            R: Serialize + DeserializeOwned + Send + Unpin + 'static,
+        >(&mut self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
+            Box::pin(self.spawn_with_handle(futures::future::lazy(move |_| f(ctx))).unwrap())
+        }
+    }
+
+    impl ParallelExecutor for HadeanPool {
+        fn execute<
+            T: Serialize + DeserializeOwned + Send + Unpin + 'static,
+            R: Serialize + DeserializeOwned + Send + Unpin + 'static,
+        // TODO: if I can make this a shared ref then make the trait shared ref too
+        >(&mut self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
+            Box::pin(HadeanPool::execute(self, f, ctx))
+        }
+    }
+
+    pub fn default_pool(cores: usize) -> impl ParallelExecutor {
+        //ThreadPool::builder().pool_size(cores).create().unwrap()
+        HadeanPool::new(cores)
+    }
+}
+
 /// Generate the ray tracing in one weekend scene
 fn one_weekend_scene() -> Scene {
     let mut rng = rand_pcg::Pcg32::seed_from_u64(2);
@@ -29,8 +73,8 @@ fn one_weekend_scene() -> Scene {
 
     let mut spheres: Vec<(Point3, f32)> = Vec::new();
     let mut add_sphere =
-        |spheres: &mut Vec<(Point3, f32)>, c: Point3, r: f32, mat: &Arc<dyn Material>| {
-            scene.objects.push(Box::new(Sphere::new(c, r, mat)));
+        |spheres: &mut Vec<(Point3, f32)>, c: Point3, r: f32, mat: Material| {
+            scene.objects.push(Sphere::new(c, r, mat.clone()));
             spheres.push((c, r));
         };
 
@@ -38,29 +82,29 @@ fn one_weekend_scene() -> Scene {
         spheres.iter().any(|s| (s.0 - c).length() < (s.1 + r))
     };
 
-    let ground_material: Arc<dyn Material> = Arc::new(Lambertian {
+    let ground_material: Material = Material::Lambertian(Lambertian {
         albedo: Color::new(0.5, 0.5, 0.5),
     });
     add_sphere(
         &mut spheres,
         Point3::new(0.0, -1000.0, -1.0),
         1000.0,
-        &ground_material,
+        ground_material,
     );
 
-    let material1: Arc<dyn Material> = Arc::new(Dielectric { ir: 1.5 });
-    add_sphere(&mut spheres, Point3::new(0.0, 1.0, 0.0), 1.0, &material1);
+    let material1: Material = Material::Dielectric(Dielectric { ir: 1.5 });
+    add_sphere(&mut spheres, Point3::new(0.0, 1.0, 0.0), 1.0, material1);
 
-    let material2: Arc<dyn Material> = Arc::new(Lambertian {
+    let material2: Material = Material::Lambertian(Lambertian {
         albedo: Color::new(0.4, 0.2, 0.1),
     });
-    add_sphere(&mut spheres, Point3::new(-4.0, 1.0, 0.0), 1.0, &material2);
+    add_sphere(&mut spheres, Point3::new(-4.0, 1.0, 0.0), 1.0, material2);
 
-    let material3: Arc<dyn Material> = Arc::new(Metal {
+    let material3: Material = Material::Metal(Metal {
         albedo: Color::new(0.7, 0.6, 0.5),
         fuzz: 0.0,
     });
-    add_sphere(&mut spheres, Point3::new(4.0, 1.0, 0.0), 1.0, &material3);
+    add_sphere(&mut spheres, Point3::new(4.0, 1.0, 0.0), 1.0, material3);
 
     for a in -11..11 {
         for b in -11..11 {
@@ -82,22 +126,22 @@ fn one_weekend_scene() -> Scene {
                 if choose_mat < 0.7 {
                     // diffuse
                     let albedo = color_random(&mut rng);
-                    let sphere_material: Arc<dyn Material> =
-                        Arc::new(Lambertian { albedo: albedo });
-                    add_sphere(&mut spheres, center, 0.2, &sphere_material);
+                    let sphere_material: Material =
+                        Material::Lambertian(Lambertian { albedo: albedo });
+                    add_sphere(&mut spheres, center, 0.2, sphere_material);
                 } else if choose_mat < 0.95 {
                     // metal
                     let albedo = color_random_range(&mut rng, 0.5, 1.0);
                     let fuzz = rng.gen_range(0.0..0.5);
-                    let sphere_material: Arc<dyn Material> = Arc::new(Metal {
+                    let sphere_material: Material = Material::Metal(Metal {
                         albedo: albedo,
                         fuzz: fuzz,
                     });
-                    add_sphere(&mut spheres, center, 0.2, &sphere_material);
+                    add_sphere(&mut spheres, center, 0.2, sphere_material);
                 } else {
                     // glass
-                    let sphere_material: Arc<dyn Material> = Arc::new(Dielectric { ir: 1.5 });
-                    add_sphere(&mut spheres, center, 0.2, &sphere_material);
+                    let sphere_material: Material = Material::Dielectric(Dielectric { ir: 1.5 });
+                    add_sphere(&mut spheres, center, 0.2, sphere_material);
                 }
             }
         }
@@ -107,6 +151,9 @@ fn one_weekend_scene() -> Scene {
 }
 
 fn main() {
+    unsafe_indirect_interface::hadean::init();
+    std::env::set_var("DISPLAY", ":0"); // hack around hadean environment variables
+
     let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
 
     let mut window = Window::new(
@@ -149,7 +196,9 @@ fn main() {
     crossbeam::scope(|s| {
         // Start the render thread
         s.spawn(|_| {
-            render_worker.render_frame();
+            let mut pool = parallel::default_pool(num_cpus::get());
+            //let mut pool = parallel::default_pool(1);
+            render_worker.render_frame(&mut pool);
         });
 
         // Window loop
@@ -170,8 +219,6 @@ fn main() {
                 window.update();
             }
         }
-
-        render_worker.stop_render();
     })
     .unwrap();
 

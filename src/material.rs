@@ -1,5 +1,26 @@
+use serde::{Serialize, Deserialize};
+
 use crate::object::*;
 use crate::shared::*;
+
+/// A material which can scatter rays
+#[derive(Copy, Clone)]
+#[derive(Serialize, Deserialize)]
+pub enum Material {
+    Lambertian(Lambertian),
+    Metal(Metal),
+    Dielectric(Dielectric),
+}
+
+impl Material {
+    pub fn scatter(&self, ray: &Ray, hit: &HitRecord) -> Option<ScatterResult> {
+        match self {
+            Material::Lambertian(m) => m.scatter(ray, hit),
+            Material::Metal(m) => m.scatter(ray, hit),
+            Material::Dielectric(m) => m.scatter(ray, hit),
+        }
+    }
+}
 
 /// Result of Material::scatter
 pub struct ScatterResult {
@@ -7,16 +28,13 @@ pub struct ScatterResult {
     pub scattered_ray: Ray,
 }
 
-/// A material which can scatter rays
-pub trait Material: Send + Sync {
-    fn scatter(&self, ray: &Ray, hit: &HitRecord) -> Option<ScatterResult>;
-}
-
+#[derive(Copy, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct Lambertian {
     pub albedo: Color,
 }
 
-impl Material for Lambertian {
+impl Lambertian {
     fn scatter(&self, _ray: &Ray, hit: &HitRecord) -> Option<ScatterResult> {
         let mut scatter_direction = hit.normal + random_unit_vector();
         if scatter_direction.near_zero() {
@@ -31,12 +49,14 @@ impl Material for Lambertian {
     }
 }
 
+#[derive(Copy, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct Metal {
     pub albedo: Color,
     pub fuzz: f32,
 }
 
-impl Material for Metal {
+impl Metal {
     fn scatter(&self, ray: &Ray, hit: &HitRecord) -> Option<ScatterResult> {
         let reflected = vec_reflect(ray.direction.normalize(), hit.normal);
 
@@ -48,11 +68,13 @@ impl Material for Metal {
     }
 }
 
+#[derive(Copy, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct Dielectric {
     pub ir: f32,
 }
 
-impl Material for Dielectric {
+impl Dielectric {
     fn scatter(&self, ray: &Ray, hit: &HitRecord) -> Option<ScatterResult> {
         let mut rng = rand::thread_rng();
 

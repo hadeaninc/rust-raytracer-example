@@ -1,8 +1,8 @@
-use scoped_threadpool::Pool;
 use spiral::ChebyshevIterator;
 
-use crossbeam::atomic::AtomicCell;
 use crossbeam_channel::bounded;
+use futures::StreamExt;
+use serde::{Serialize, Deserialize};
 
 use crate::camera::*;
 use crate::scene::*;
@@ -10,6 +10,7 @@ use crate::shared::*;
 
 /// Coordinates for a block to render
 #[derive(Copy, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct RenderBlock {
     pub x: u32,
     pub y: u32,
@@ -77,6 +78,7 @@ impl Iterator for ImageBlocker {
 }
 
 /// A fully rendered pixel
+#[derive(Serialize, Deserialize)]
 pub struct PixelResult {
     pub x: u32,
     pub y: u32,
@@ -123,7 +125,6 @@ pub struct Renderer {
     image_height: u32,
     channel_sender: crossbeam_channel::Sender<PixelResult>,
     channel_receiver: crossbeam_channel::Receiver<PixelResult>,
-    keep_rendering: AtomicCell<bool>,
     scene: Scene,
     camera: Camera,
     samples_per_pixel: u32,
@@ -144,7 +145,6 @@ impl Renderer {
             image_height: image_height,
             channel_sender: s,
             channel_receiver: r,
-            keep_rendering: AtomicCell::new(true),
             scene: scene,
             camera: camera,
             samples_per_pixel: samples_per_pixel,
@@ -152,7 +152,7 @@ impl Renderer {
         }
     }
 
-    pub fn render_frame(&self) {
+    pub fn render_frame(&self, pool: &mut impl crate::parallel::ParallelExecutor) {
         println!("Start render");
         let time_start = std::time::Instant::now();
 
@@ -177,63 +177,80 @@ impl Renderer {
             spiral_blocks.push(blocks[block_index])
         }
 
-        let ref atomic_ray_count = AtomicCell::new(0u64);
+        // Loop blocks in the image blocker and spawn renderblock tasks
+        let mut futs = futures::stream::FuturesOrdered::new();
+        for renderblock in spiral_blocks {
+            #[derive(Serialize, Deserialize)]
+            struct Ctx {
+                renderblock: RenderBlock,
+                image_width: u32,
+                image_height: u32,
+                scene: Scene,
+                camera: Camera,
+                samples_per_pixel: u32,
+                max_depth: i32,
+            }
+            fn work(Ctx { renderblock, image_width, image_height, scene, camera, samples_per_pixel, max_depth }: Ctx) -> (u32, Vec<PixelResult>) {
+                // Begin of thread
+                let num_pixels = renderblock.width * renderblock.height;
+                let mut ray_count = 0;
+                let mut rng = rand::thread_rng();
+                let pixels = (0..num_pixels).into_iter().map(|index| {
+                    // Compute pixel location
+                    let x = renderblock.x + index % renderblock.width;
+                    let y =
+                        renderblock.y + (index / renderblock.width) % renderblock.height;
 
-        let mut threadpool = Pool::new(num_cpus::get() as u32);
+                    // Set up supersampling
+                    let mut color_accum = Color::ZERO;
+                    let u_base = x as f32 / (image_width as f32 - 1.0);
+                    let v_base = (image_height - y - 1) as f32
+                        / (image_height as f32 - 1.0);
+                    let u_rand = 1.0 / (image_width as f32 - 1.0);
+                    let v_rand = 1.0 / (image_height as f32 - 1.0);
 
-        threadpool.scoped(|scoped| {
-            // Loop blocks in the image blocker and spawn renderblock tasks
-            for renderblock in spiral_blocks {
-                scoped.execute(move || {
-                    // Begin of thread
-                    let num_pixels = renderblock.width * renderblock.height;
-                    let mut ray_count = 0;
-                    let mut rng = rand::thread_rng();
-                    if self.keep_rendering.load() {
-                        (0..num_pixels).into_iter().for_each(|index| {
-                            // Compute pixel location
-                            let x = renderblock.x + index % renderblock.width;
-                            let y =
-                                renderblock.y + (index / renderblock.width) % renderblock.height;
+                    // Supersample this pixel
+                    for _ in 0..samples_per_pixel {
+                        let u = u_base + rng.gen_range(0.0..u_rand);
+                        let v = v_base + rng.gen_range(0.0..v_rand);
+                        let ray = camera.get_ray(u, v);
+                        // Start the primary here from here
+                        color_accum +=
+                            ray_color(ray, &scene, max_depth, &mut ray_count);
+                    }
+                    color_accum /= samples_per_pixel as f32;
 
-                            // Set up supersampling
-                            let mut color_accum = Color::ZERO;
-                            let u_base = x as f32 / (self.image_width as f32 - 1.0);
-                            let v_base = (self.image_height - y - 1) as f32
-                                / (self.image_height as f32 - 1.0);
-                            let u_rand = 1.0 / (self.image_width as f32 - 1.0);
-                            let v_rand = 1.0 / (self.image_height as f32 - 1.0);
+                    PixelResult {
+                        x: x,
+                        y: y,
+                        color: color_accum,
+                    }
+                }).collect(); // for_each pixel
+                // TODO incrementally return pixels, it looks pretty cool...but how much bandwidth?
+                (ray_count, pixels)
+            }
+            futs.push(pool.execute(work, Ctx {
+                renderblock,
+                image_width: self.image_width,
+                image_height: self.image_height,
+                scene: self.scene.clone(),
+                camera: self.camera.clone(),
+                samples_per_pixel: self.samples_per_pixel,
+                max_depth: self.max_depth,
+            }));
+        } // loop blocker
 
-                            // Supersample this pixel
-                            for _ in 0..self.samples_per_pixel {
-                                let u = u_base + rng.gen_range(0.0..u_rand);
-                                let v = v_base + rng.gen_range(0.0..v_rand);
-                                let ray = self.camera.get_ray(u, v);
-                                // Start the primary here from here
-                                color_accum +=
-                                    ray_color(ray, &self.scene, self.max_depth, &mut ray_count);
-                            }
-                            color_accum /= self.samples_per_pixel as f32;
-
-                            // Send the result back
-                            let result = PixelResult {
-                                x: x,
-                                y: y,
-                                color: color_accum,
-                            };
-                            if self.keep_rendering.load() {
-                                self.channel_sender.send(result).unwrap();
-                            }
-                        }); // for_each pixel
-                    } // check keep_rendering
-                    atomic_ray_count.fetch_add(ray_count as u64);
-                    // End of thread
-                }); // execute
-            } // loop blocker
-        }); // scoped
+        let mut ray_count = 0;
+        futures::executor::block_on(async {
+            while let Some((pixels_ray_count, pixels)) = futs.next().await {
+                ray_count += pixels_ray_count;
+                for pixel in pixels {
+                    self.channel_sender.send(pixel).unwrap()
+                }
+            }
+        });
 
         let time_elapsed = time_start.elapsed();
-        let ray_count = atomic_ray_count.load();
         let ray_count_f32 = ray_count as f32;
         let mrays_sec = (ray_count_f32 / time_elapsed.as_secs_f32()) / 1000000.0;
 
@@ -258,15 +275,5 @@ impl Renderer {
             }
         }
         results
-    }
-
-    /// Request a currently ongoing render to stop looping
-    pub fn stop_render(&self) {
-        // First flag boolean
-        self.keep_rendering.store(false);
-        // Then drain channel
-        while !self.channel_receiver.is_empty() {
-            let _ = self.channel_receiver.recv();
-        }
     }
 }

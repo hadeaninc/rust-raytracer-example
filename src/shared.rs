@@ -2,7 +2,6 @@ pub use bvh::aabb::{Bounded, AABB};
 pub use bvh::bounding_hierarchy::{BHShape, BoundingHierarchy};
 pub use glam::Vec3;
 pub use rand::Rng;
-pub use std::sync::Arc;
 
 pub type Point3 = glam::Vec3;
 pub type Color = glam::Vec3;

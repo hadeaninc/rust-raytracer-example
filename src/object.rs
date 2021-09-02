@@ -1,3 +1,5 @@
+use serde::{Serialize, Deserialize, de::DeserializeOwned};
+
 use crate::material::*;
 use crate::shared::*;
 
@@ -7,11 +9,11 @@ pub struct HitRecord {
     pub normal: Vec3,
     pub t: f32,
     pub front_face: bool,
-    pub material: Arc<dyn Material>,
+    pub material: Material,
 }
 
 impl HitRecord {
-    pub fn new(ray: Ray, t: f32, outward_normal: Vec3, material: Arc<dyn Material>) -> Self {
+    pub fn new(ray: Ray, t: f32, outward_normal: Vec3, material: Material) -> Self {
         let front_face = ray.direction.dot(outward_normal) < 0.0;
         let normal = if front_face {
             outward_normal
@@ -30,6 +32,7 @@ impl HitRecord {
 
 /// Bounds for RayHittable
 #[derive(Copy, Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct HittableBounds {
     aabb: AABB,
     node_index: usize,
@@ -53,23 +56,25 @@ impl BHShape for HittableBounds {
 }
 
 /// An object in the scene which can be hit with a ray
-pub trait RayHittable: Send + Sync {
+pub trait RayHittable: Serialize + DeserializeOwned + Send + Sync {
     // Intersect ray with object
     fn intersect(&self, query: RayQuery) -> Option<HitRecord>;
     // Return bounds
     fn compute_bounds(&self, index: usize) -> HittableBounds;
 }
 
+#[derive(Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct Sphere {
     pub center: Point3,
     pub radius: f32,
-    pub material: Arc<dyn Material>,
+    pub material: Material,
     radius_rcp: f32,
     radius_sq: f32,
 }
 
 impl Sphere {
-    pub fn new(center: Point3, radius: f32, material: &Arc<dyn Material>) -> Self {
+    pub fn new(center: Point3, radius: f32, material: Material) -> Self {
         Sphere {
             center: center,
             radius: radius,

@@ -2,11 +2,15 @@ use crate::object::*;
 use crate::shared::*;
 
 use bvh::bvh::BVH;
+use serde::{Serialize, Deserialize};
 
 /// Basic scene which holds objects and a BVH
+#[derive(Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct Scene {
     // List of hittables
-    pub objects: Vec<Box<dyn RayHittable>>,
+    //pub objects: Vec<Box<dyn RayHittable>>,
+    pub objects: Vec<Sphere>,
 
     // List of bounds for hittables
     pub bounds: Vec<HittableBounds>,
@@ -47,7 +51,7 @@ impl Scene {
 
             // Iterate over hit objects to find closest
             for bounds in hit_bounds {
-                let obj = self.objects[bounds.hittable_index].as_ref();
+                let obj = &self.objects[bounds.hittable_index];
                 let hit_option = obj.intersect(query);
                 if hit_option.is_some() {
                     // Shorten the ray

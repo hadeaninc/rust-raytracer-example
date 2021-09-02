@@ -1,6 +1,10 @@
+use serde::{Serialize, Deserialize};
+
 use crate::shared::*;
 
 /// Representation of a camera in the scene
+#[derive(Clone)]
+#[derive(Serialize, Deserialize)]
 pub struct Camera {
     origin: Point3,
     lower_left_corner: Point3,
