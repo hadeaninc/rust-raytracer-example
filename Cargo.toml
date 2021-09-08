@@ -12,8 +12,7 @@ minifb = { version = "0.19.3", features = ["x11"], default-features = false }
 crossbeam = "0.6"
 crossbeam-channel = "0.4"
 glam = { version = "0.18", features = ["serde"] }
-scoped_threadpool = "0.1.9"
-bvh = { git = "https://github.com/aidanhs/bvh.git", rev = "1ed62c1", features = ["serde_impls"] }
+bvh = { version = "0.6", features = ["serde_impls"] }
 rand = "0.8.3"
 spiral = "0.1.9"
 png = "0.16.8"
@@ -21,12 +20,5 @@ num_cpus = "1.13.0"
 rand_pcg = "0.3.0"
 
 futures = { version = "0.3", features = ["executor", "thread-pool"] }
-relative.path = "../zircon/relative"
 serde = { version = "1", features = ["derive"] }
-unsafe-indirect-interface.path = "../zircon/unsafe-indirect-interface"
-
-#[patch.crates-io]
-#bvh = { path = "bvh", features = ["serde_impls"] }
-
-[features]
-hadean = []
+hadean = { optional = true, path = "/home/aidanhs/.hadean/sdk/crates/hadean" }

@@ -119,8 +119,9 @@ checksum = "63396b8a4b9de3f4fdfb320ab6080762242f66a8ef174c49d8e19b674db4cdbe"
 
 [[package]]
 name = "bvh"
-version = "0.5.0"
-source = "git+https://github.com/aidanhs/bvh.git?rev=1ed62c1#1ed62c1fb64081e832c4ee27a19f9dd8b989d9b7"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9db59f8d1840da2b783a3225420cafb6694da9ef5dd27dab6207a2581bbc4c06"
 dependencies = [
  "approx",
  "glam",
@@ -511,6 +512,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b919933a397b79c37e33b77bb2aa3dc8eb6e165ad809e58ff75bc7db2e34574"
 
 [[package]]
+name = "hadean"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "bytes",
+ "futures",
+ "libc",
+ "serde",
+ "tokio",
+ "tokio-serde",
+ "tokio-stream",
+ "tokio-util",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -801,16 +817,14 @@ dependencies = [
  "crossbeam-channel 0.4.4",
  "futures",
  "glam",
+ "hadean",
  "minifb",
  "num_cpus",
  "png",
  "rand 0.8.3",
  "rand_pcg 0.3.0",
- "relative",
- "scoped_threadpool",
  "serde",
  "spiral",
- "unsafe-indirect-interface",
 ]
 
 [[package]]
@@ -1178,13 +1192,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5eb417147ba9860a96cfe72a0b93bf88fee1744b5636ec99ab20c1aa9376581"
 
 [[package]]
-name = "relative"
-version = "0.1.0"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1198,12 +1205,6 @@ checksum = "138e3e0acb6c9fb258b19b67cb8abd63c00679d2851805ea151465464fe9030a"
 dependencies = [
  "semver",
 ]
-
-[[package]]
-name = "scoped_threadpool"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d51f5df5af43ab3f1360b429fa5e0152ac5ce8c0bd6485cae490332e96846a8"
 
 [[package]]
 name = "scopeguard"
@@ -1475,21 +1476,6 @@ dependencies = [
  "encoding_rs",
  "lazy_static",
  "regex",
-]
-
-[[package]]
-name = "unsafe-indirect-interface"
-version = "0.1.0"
-dependencies = [
- "bincode",
- "bytes",
- "futures",
- "libc",
- "serde",
- "tokio",
- "tokio-serde",
- "tokio-stream",
- "tokio-util",
 ]
 
 [[package]]

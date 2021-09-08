@@ -30,7 +30,8 @@ mod parallel {
     use std::future::Future;
     use std::pin::Pin;
 
-    use unsafe_indirect_interface::pool::HadeanPool;
+    #[cfg(feature = "hadean")]
+    use hadean::pool::HadeanPool;
 
     // TODO: I think we want ATCs here to be able to use Future as an associated type and then use it
     // in the return type of execute
@@ -50,6 +51,7 @@ mod parallel {
         }
     }
 
+    #[cfg(feature = "hadean")]
     impl ParallelExecutor for HadeanPool {
         fn execute<
             T: Serialize + DeserializeOwned + Send + Unpin + 'static,
@@ -60,9 +62,13 @@ mod parallel {
         }
     }
 
+    #[cfg(feature = "hadean")]
     pub fn default_pool(cores: usize) -> impl ParallelExecutor {
-        //ThreadPool::builder().pool_size(cores).create().unwrap()
         HadeanPool::new(cores)
+    }
+    #[cfg(not(feature = "hadean"))]
+    pub fn default_pool(cores: usize) -> impl ParallelExecutor {
+        ThreadPool::builder().pool_size(cores).create().unwrap()
     }
 }
 
@@ -151,7 +157,10 @@ fn one_weekend_scene() -> Scene {
 }
 
 fn main() {
-    unsafe_indirect_interface::hadean::init();
+    #[cfg(feature = "hadean")]
+    {
+        hadean::hadean::init();
+    }
     std::env::set_var("DISPLAY", ":0"); // hack around hadean environment variables
 
     let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
