@@ -180,56 +180,7 @@ impl Renderer {
         // Loop blocks in the image blocker and spawn renderblock tasks
         let mut futs = futures::stream::FuturesOrdered::new();
         for renderblock in spiral_blocks {
-            #[derive(Serialize, Deserialize)]
-            struct Ctx {
-                renderblock: RenderBlock,
-                image_width: u32,
-                image_height: u32,
-                scene: Scene,
-                camera: Camera,
-                samples_per_pixel: u32,
-                max_depth: i32,
-            }
-            fn work(Ctx { renderblock, image_width, image_height, scene, camera, samples_per_pixel, max_depth }: Ctx) -> (u32, Vec<PixelResult>) {
-                // Begin of thread
-                let num_pixels = renderblock.width * renderblock.height;
-                let mut ray_count = 0;
-                let mut rng = rand::thread_rng();
-                let pixels = (0..num_pixels).into_iter().map(|index| {
-                    // Compute pixel location
-                    let x = renderblock.x + index % renderblock.width;
-                    let y =
-                        renderblock.y + (index / renderblock.width) % renderblock.height;
-
-                    // Set up supersampling
-                    let mut color_accum = Color::ZERO;
-                    let u_base = x as f32 / (image_width as f32 - 1.0);
-                    let v_base = (image_height - y - 1) as f32
-                        / (image_height as f32 - 1.0);
-                    let u_rand = 1.0 / (image_width as f32 - 1.0);
-                    let v_rand = 1.0 / (image_height as f32 - 1.0);
-
-                    // Supersample this pixel
-                    for _ in 0..samples_per_pixel {
-                        let u = u_base + rng.gen_range(0.0..u_rand);
-                        let v = v_base + rng.gen_range(0.0..v_rand);
-                        let ray = camera.get_ray(u, v);
-                        // Start the primary here from here
-                        color_accum +=
-                            ray_color(ray, &scene, max_depth, &mut ray_count);
-                    }
-                    color_accum /= samples_per_pixel as f32;
-
-                    PixelResult {
-                        x: x,
-                        y: y,
-                        color: color_accum,
-                    }
-                }).collect(); // for_each pixel
-                // TODO incrementally return pixels, it looks pretty cool...but how much bandwidth?
-                (ray_count, pixels)
-            }
-            futs.push(pool.execute(work, Ctx {
+            futs.push(pool.execute(render_block, Ctx {
                 renderblock,
                 image_width: self.image_width,
                 image_height: self.image_height,
@@ -276,4 +227,55 @@ impl Renderer {
         }
         results
     }
+}
+
+#[derive(Serialize, Deserialize)]
+struct Ctx {
+    renderblock: RenderBlock,
+    image_width: u32,
+    image_height: u32,
+    scene: Scene,
+    camera: Camera,
+    samples_per_pixel: u32,
+    max_depth: i32,
+}
+
+fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, samples_per_pixel, max_depth }: Ctx) -> (u32, Vec<PixelResult>) {
+    // Begin of thread
+    let num_pixels = renderblock.width * renderblock.height;
+    let mut ray_count = 0;
+    let mut rng = rand::thread_rng();
+    let pixels = (0..num_pixels).into_iter().map(|index| {
+        // Compute pixel location
+        let x = renderblock.x + index % renderblock.width;
+        let y =
+            renderblock.y + (index / renderblock.width) % renderblock.height;
+
+        // Set up supersampling
+        let mut color_accum = Color::ZERO;
+        let u_base = x as f32 / (image_width as f32 - 1.0);
+        let v_base = (image_height - y - 1) as f32
+            / (image_height as f32 - 1.0);
+        let u_rand = 1.0 / (image_width as f32 - 1.0);
+        let v_rand = 1.0 / (image_height as f32 - 1.0);
+
+        // Supersample this pixel
+        for _ in 0..samples_per_pixel {
+            let u = u_base + rng.gen_range(0.0..u_rand);
+            let v = v_base + rng.gen_range(0.0..v_rand);
+            let ray = camera.get_ray(u, v);
+            // Start the primary here from here
+            color_accum +=
+                ray_color(ray, &scene, max_depth, &mut ray_count);
+        }
+        color_accum /= samples_per_pixel as f32;
+
+        PixelResult {
+            x: x,
+            y: y,
+            color: color_accum,
+        }
+    }).collect(); // for_each pixel
+    // TODO incrementally return pixels, it looks pretty cool...but how much bandwidth?
+    (ray_count, pixels)
 }
