@@ -22,3 +22,6 @@ rand_pcg = "0.3.0"
 futures = { version = "0.3", features = ["executor", "thread-pool"] }
 serde = { version = "1", features = ["derive"] }
 hadean = { optional = true, path = "/home/aidanhs/.hadean/sdk/crates/hadean" }
+
+[features]
+distributed = ["hadean"]

@@ -30,7 +30,7 @@ mod parallel {
     use std::future::Future;
     use std::pin::Pin;
 
-    #[cfg(feature = "hadean")]
+    #[cfg(feature = "distributed")]
     use hadean::pool::HadeanPool;
 
     // TODO: I think we want ATCs here to be able to use Future as an associated type and then use it
@@ -51,7 +51,7 @@ mod parallel {
         }
     }
 
-    #[cfg(feature = "hadean")]
+    #[cfg(feature = "distributed")]
     impl ParallelExecutor for HadeanPool {
         fn execute<
             T: Serialize + DeserializeOwned + Send + Unpin + 'static,
@@ -62,11 +62,11 @@ mod parallel {
         }
     }
 
-    #[cfg(feature = "hadean")]
+    #[cfg(feature = "distributed")]
     pub fn default_pool(cores: usize) -> impl ParallelExecutor {
         HadeanPool::new(cores)
     }
-    #[cfg(not(feature = "hadean"))]
+    #[cfg(not(feature = "distributed"))]
     pub fn default_pool(cores: usize) -> impl ParallelExecutor {
         ThreadPool::builder().pool_size(cores).create().unwrap()
     }
@@ -157,7 +157,8 @@ fn one_weekend_scene() -> Scene {
 }
 
 fn main() {
-    #[cfg(feature = "hadean")]
+    std::env::set_var("RUST_BACKTRACE", "1"); // hack around hadean environment variables
+    #[cfg(feature = "distributed")]
     {
         hadean::hadean::init();
     }
@@ -206,7 +207,6 @@ fn main() {
         // Start the render thread
         s.spawn(|_| {
             let mut pool = parallel::default_pool(num_cpus::get());
-            //let mut pool = parallel::default_pool(1);
             render_worker.render_frame(&mut pool);
         });
 
