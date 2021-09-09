@@ -7,6 +7,12 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+actix = "0.10"
+actix-files = "0.5"
+actix-rt = "1.1"
+actix-web = "3.3"
+actix-web-actors = "3.0"
+
 # https://github.com/emoon/rust_minifb/issues/256 - wayland doesn't update the window
 minifb = { version = "0.19.3", features = ["x11"], default-features = false }
 crossbeam = "0.6"

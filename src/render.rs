@@ -3,8 +3,10 @@ use spiral::ChebyshevIterator;
 use crossbeam_channel::bounded;
 use futures::StreamExt;
 use serde::{Serialize, Deserialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::camera::*;
+use crate::parallel::ParallelExecutor;
 use crate::scene::*;
 use crate::shared::*;
 
@@ -129,6 +131,7 @@ pub struct Renderer {
     camera: Camera,
     samples_per_pixel: u32,
     max_depth: i32,
+    should_stop: AtomicBool,
 }
 
 impl Renderer {
@@ -149,10 +152,11 @@ impl Renderer {
             camera: camera,
             samples_per_pixel: samples_per_pixel,
             max_depth: 50,
+            should_stop: AtomicBool::new(false),
         }
     }
 
-    pub fn render_frame(&self, pool: &mut impl crate::parallel::ParallelExecutor) {
+    pub fn render_frame(&self, pool: &mut impl ParallelExecutor) {
         println!("Start render");
         let time_start = std::time::Instant::now();
 
@@ -194,6 +198,9 @@ impl Renderer {
         let mut ray_count = 0;
         futures::executor::block_on(async {
             while let Some((pixels_ray_count, pixels)) = futs.next().await {
+                if self.should_stop.load(Ordering::SeqCst) {
+                    break
+                }
                 ray_count += pixels_ray_count;
                 for pixel in pixels {
                     self.channel_sender.send(pixel).unwrap()
@@ -214,18 +221,26 @@ impl Renderer {
     }
 
     /// Returns fully rendered pixels in the channel
-    pub fn poll_results(&self) -> Vec<PixelResult> {
+    pub fn poll_results(&self) -> Option<Vec<PixelResult>> {
         let mut results = Vec::new();
         let mut limit = self.image_width * self.image_height;
+        if self.should_stop.load(Ordering::SeqCst) {
+            return None
+        }
         while !self.channel_receiver.is_empty() {
             let res = self.channel_receiver.recv().unwrap();
             results.push(res);
             limit -= 1;
             if limit == 0 {
-                break;
+                self.stop();
+                break
             }
         }
-        results
+        Some(results)
+    }
+
+    pub fn stop(&self) {
+        self.should_stop.store(true, Ordering::SeqCst);
     }
 }
 

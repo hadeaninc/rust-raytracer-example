@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+    <meta charset="utf-8">
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+</head>
+<body>
+    <div id="root">
+    </div>
+    <script type="text/babel">
+
+        let ws = new WebSocket("ws://127.0.0.1:8888/ws");
+
+        function blobToDataURL(blob, callback) {
+            var a = new FileReader();
+            a.onload = function (e) {callback(e.target.result);}
+            a.readAsDataURL(blob);
+        }
+
+        class Root extends React.Component {
+            constructor(props) {
+                super(props);
+                ws.onmessage = (event) => {
+                    blobToDataURL(event.data, (frame) => {
+                        this.setState({ frame });
+                    });
+                };
+                this.state = {
+                    'frame': null,
+                };
+            }
+            render() {
+                return (
+                    <div>
+                        <div>Rendering, please wait</div>
+                        {this.state.frame !== null ? <img src={this.state.frame}></img> : "waiting for first render image"}
+                    </div>
+                );
+            }
+        }
+        ReactDOM.render(<Root />, document.getElementById('root'));
+    </script>
+</body>
+</html>

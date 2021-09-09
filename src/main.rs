@@ -3,11 +3,14 @@ mod material;
 mod object;
 mod render;
 mod scene;
+mod server;
 mod shared;
 
+use std::env;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::process;
 use rand::SeedableRng;
 
 use camera::*;
@@ -17,10 +20,6 @@ use scene::*;
 use shared::*;
 
 use minifb::{Key, Window, WindowOptions};
-
-const WIDTH: usize = 1280;
-const HEIGHT: usize = 720;
-const SAMPLES_PER_PIXEL: u32 = 128;
 
 mod parallel {
     use futures::executor::ThreadPool;
@@ -70,6 +69,45 @@ mod parallel {
     pub fn default_pool(cores: usize) -> impl ParallelExecutor {
         ThreadPool::builder().pool_size(cores).create().unwrap()
     }
+}
+
+fn one_weekend_cam(width: usize, height: usize) -> Camera {
+    let aspect_ratio = (width as f32) / (height as f32);
+
+    let lookfrom = Point3::new(13.0, 2.0, 3.0);
+    let lookat = Point3::new(0.0, 0.0, 0.0);
+    let vup = Vec3::new(0.0, 1.0, 0.0);
+    let dist_to_focus = 10.0;
+    let aperture = 0.1;
+
+    Camera::new(
+        lookfrom,
+        lookat,
+        vup,
+        20.0,
+        aspect_ratio,
+        aperture,
+        dist_to_focus,
+    )
+}
+
+fn one_weekend_cam_lookat(width: usize, height: usize, lookat: Point3) -> Camera {
+    let aspect_ratio = (width as f32) / (height as f32);
+
+    let lookfrom = Point3::new(13.0, 2.0, 3.0);
+    let vup = Vec3::new(0.0, 1.0, 0.0);
+    let dist_to_focus = 10.0;
+    let aperture = 0.1;
+
+    Camera::new(
+        lookfrom,
+        lookat,
+        vup,
+        20.0,
+        aspect_ratio,
+        aperture,
+        dist_to_focus,
+    )
 }
 
 /// Generate the ray tracing in one weekend scene
@@ -162,9 +200,47 @@ fn main() {
     {
         hadean::hadean::init();
     }
-    std::env::set_var("DISPLAY", ":0"); // hack around hadean environment variables
 
-    let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
+    let args: Vec<_> = env::args().collect();
+
+    if args.len() == 2 && args[1] == "serve" {
+
+        server::main("127.0.0.1:8888".to_owned());
+
+    } else if args.len() >= 2 && args[1] == "window" {
+
+        let out_file = if args.len() > 2 { Some(args[2].as_str()) } else { None };
+        window_main(out_file);
+
+    } else {
+
+        println!("invalid command: {:?}", args);
+        process::exit(1);
+
+    }
+}
+
+fn write_png(width: usize, height: usize, w: impl Write, buffer_display: &[ColorDisplay]) {
+    // Write buffer_display as 8-bit RGB PNG
+    let mut encoder = png::Encoder::new(w, width as u32, height as u32);
+    encoder.set_color(png::ColorType::RGB);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().unwrap();
+
+    let data: Vec<u8> = buffer_display
+        .iter()
+        .flat_map(|x| u8_vec_from_color_display(*x))
+        .collect();
+    writer.write_image_data(&data).unwrap();
+}
+
+fn window_main(out_file: Option<&str>) {
+    const WIDTH: usize = 1280;
+    const HEIGHT: usize = 720;
+    const SAMPLES_PER_PIXEL: u32 = 128;
+
+    #[cfg(feature = "distributed")]
+    std::env::set_var("DISPLAY", ":0"); // hack around hadean environment variables for local runs
 
     let mut window = Window::new(
         "Ray tracing in one weekend - ESC to exit",
@@ -179,33 +255,18 @@ fn main() {
     // Limit to max ~60 fps update rate
     window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
 
-    let aspect_ratio = (WIDTH as f32) / (HEIGHT as f32);
-
-    let lookfrom = Point3::new(13.0, 2.0, 3.0);
-    let lookat = Point3::new(0.0, 0.0, 0.0);
-    let vup = Vec3::new(0.0, 1.0, 0.0);
-    let dist_to_focus = 10.0;
-    let aperture = 0.1;
-
-    let cam = Camera::new(
-        lookfrom,
-        lookat,
-        vup,
-        20.0,
-        aspect_ratio,
-        aperture,
-        dist_to_focus,
-    );
-
     let mut scene = one_weekend_scene();
     scene.build_bvh();
+    let cam = one_weekend_cam(WIDTH, HEIGHT);
 
     let render_worker =
         render::Renderer::new(WIDTH as u32, HEIGHT as u32, SAMPLES_PER_PIXEL, scene, cam);
 
-    crossbeam::scope(|s| {
+    let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
+
+    crossbeam::scope(|scope| {
         // Start the render thread
-        s.spawn(|_| {
+        scope.spawn(|_| {
             let mut pool = parallel::default_pool(num_cpus::get());
             render_worker.render_frame(&mut pool);
         });
@@ -213,13 +274,17 @@ fn main() {
         // Window loop
         while window.is_open() && !window.is_key_down(Key::Escape) {
             // Fetch rendered pixels
-            let ref render_results = render_worker.poll_results();
-            let has_changed = render_results.len() > 0;
-            for result in render_results {
-                let index = index_from_xy(WIDTH as u32, HEIGHT as u32, result.x, result.y);
-                buffer_display[index] = color_display_from_render(result.color);
-            }
-
+            let has_changed = match render_worker.poll_results() {
+                Some(render_results) => {
+                    let has_changed = !render_results.is_empty();
+                    for result in render_results {
+                        let index = index_from_xy(WIDTH as u32, HEIGHT as u32, result.x, result.y);
+                        buffer_display[index] = color_display_from_render(result.color);
+                    };
+                    has_changed
+                },
+                None => false,
+            };
             if has_changed {
                 window
                     .update_with_buffer(&buffer_display, WIDTH, HEIGHT)
@@ -228,26 +293,17 @@ fn main() {
                 window.update();
             }
         }
+
+        render_worker.stop();
     })
     .unwrap();
 
     // If we get one argument, assume it's our output png filename
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
-        let path = Path::new(&args[1]);
+    if let Some(out_file) = out_file {
+        let path = Path::new(out_file);
         let file = File::create(path).unwrap();
         let ref mut w = BufWriter::new(file);
 
-        // Write buffer_display as 8-bit RGB PNG
-        let mut encoder = png::Encoder::new(w, WIDTH as u32, HEIGHT as u32);
-        encoder.set_color(png::ColorType::RGB);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().unwrap();
-
-        let data: Vec<u8> = buffer_display
-            .iter()
-            .flat_map(|x| u8_vec_from_color_display(*x))
-            .collect();
-        writer.write_image_data(&data).unwrap();
+        write_png(WIDTH, HEIGHT, w, &buffer_display);
     }
 }
