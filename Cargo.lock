@@ -527,6 +527,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hadean-tracer"
+version = "0.1.0"
+dependencies = [
+ "bvh",
+ "crossbeam",
+ "crossbeam-channel 0.4.4",
+ "futures",
+ "glam",
+ "hadean",
+ "minifb",
+ "num_cpus",
+ "png",
+ "rand 0.8.3",
+ "rand_pcg 0.3.0",
+ "serde",
+ "spiral",
+]
+
+[[package]]
 name = "hermit-abi"
 version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -807,25 +826,6 @@ name = "once_cell"
 version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af8b08b04175473088b46763e51ee54da5f9a164bc162f615b91bc179dbf15a3"
-
-[[package]]
-name = "one_weekend"
-version = "0.1.0"
-dependencies = [
- "bvh",
- "crossbeam",
- "crossbeam-channel 0.4.4",
- "futures",
- "glam",
- "hadean",
- "minifb",
- "num_cpus",
- "png",
- "rand 0.8.3",
- "rand_pcg 0.3.0",
- "serde",
- "spiral",
-]
 
 [[package]]
 name = "orbclient"
