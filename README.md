@@ -2,7 +2,8 @@
 
 ["Ray tracing in one weekend"](https://raytracing.github.io/) implementation in Rust that runs distributed on the cloud with [Hadean](platform.hadean.com). Forked from [this implementation](https://github.com/mdesmedt/rust_one_weekend).
 
-Uses:
+Makes use of:
+
  - Hadean for distributing on the cloud
  - `futures::executor` and `crossbeam` for multicore
  - `bvh` for acceleration
