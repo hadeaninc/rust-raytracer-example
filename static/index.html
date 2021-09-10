@@ -102,7 +102,12 @@
 
     function handleWSMessage(msg) {
         if (typeof msg.data === 'string') {
-            // Strings are JSON-formatted config messages that reset rendering
+            // Strings on the websocket are JSON-formatted config messages that reset rendering
+            // {
+            //   "job": { "field1": <value1>, ... },
+            //   "job_fields": [ ["field1", "string" | "integer" | "float"], ... },
+            // }
+            // NOTE: must contain at least 'width', 'height' and 'total_frames'
 
             let config = JSON.parse(msg.data);
             let job_entry = {};
@@ -112,7 +117,7 @@
             this.setState({
                 config,
                 nextFrame: 0,
-                frames: Array(config.total_frames).fill(null),
+                frames: Array(config.job.total_frames).fill(null),
                 gif: null,
                 job_entry,
             });
@@ -120,7 +125,7 @@
         } else if (msg.data instanceof Blob) {
             // Blobs are either a rendered frame or a gif
 
-            if (this.state.nextFrame === this.state.config.total_frames) {
+            if (this.state.nextFrame === this.state.config.job.total_frames) {
                 // If we've already got all frames it must be the gif
                 blobToDataURL(msg.data, (gif) => this.setState({ gif }));
 
@@ -149,7 +154,7 @@
             super(props);
             ws.onmessage = handleWSMessage.bind(this);
             this.state = {
-                config: { width: 0, height: 0, total_frames: 0, job_fields: [] },
+                config: { job: { 'width': 1, 'height': 1, 'total_frames': 0 }, job_fields: [] },
                 nextFrame: 0,
                 frames: [],
                 gif: null,
@@ -191,17 +196,14 @@
                 <div key={field}>{field}: <input onChange={this.handleJobEntryChange(field)} value={job_entry[field]}></input></div>
             )}</div>;
 
-            let max_dimension = Math.max(config.width, config.height);
+            let max_dimension = Math.max(config.job.width, config.job.height);
             let scale_factor = THUMB_MAX_PX_DIMENSION / max_dimension;
-            let width = config.width * scale_factor;
-            let height = config.height * scale_factor;
+            let width = config.job.width * scale_factor;
+            let height = config.job.height * scale_factor;
             let frames_display = frames.map((frame, i) => {
                 let src = frame === null ? BLACK_PIXEL : frame;
                 return <img key={i} width={width} height={height} src={src}></img>
             });
-
-            let configWithoutFields = shallowClone(config);
-            delete configWithoutFields.job_fields;
 
             return (
                 <div>
@@ -209,9 +211,9 @@
                         <h1>Hadean Renderer</h1>
                         {params_display}
                         <button onClick={this.handleClick.bind(this)}>Re-render</button>
-                        <div>Rendered {nextFrame} of {config.total_frames} frames for {JSON.stringify(configWithoutFields)}</div>
+                        <div>Rendered {nextFrame} of {config.job.total_frames} frames for {JSON.stringify(config.job)}</div>
                     </div>
-                    <div id="main"><img width={config.width} height={config.height} src={gif === null ? BLACK_PIXEL : gif}></img></div>
+                    <div id="main"><img width={config.job.width} height={config.job.height} src={gif === null ? BLACK_PIXEL : gif}></img></div>
                     <div id="thumbs">{frames_display}</div>
                 </div>
             );

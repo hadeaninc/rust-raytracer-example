@@ -19,35 +19,34 @@ use super::{one_weekend_cam_lookat, one_weekend_scene, write_png};
 
 static INDEX_HTML: &[u8] = include_bytes!("../static/index.html");
 
-const WIDTH: usize = 1280/4;
-const HEIGHT: usize = 720/4;
-const SAMPLES_PER_PIXEL: u32 = 128/4;
-
 // Want to range from -5 to +5
 const PAN_RANGE: f32 = 10.;
 
 #[derive(Clone)]
 #[derive(Serialize, Deserialize)]
 struct RenderJob {
-    num_frames: usize,
+    total_frames: usize,
+    samples_per_pixel: u32,
+    width: u16,
+    height: u16,
 }
 
 fn render_job_fields() -> serde_json::Value {
     serde_json::json!([
-        ["num_frames", "integer"],
+        ["total_frames", "integer"],
+        ["samples_per_pixel", "integer"],
+        ["width", "integer"],
+        ["height", "integer"],
     ])
-}
-
-impl RenderJob {
-    fn total_frames(&self) -> usize {
-        self.num_frames
-    }
 }
 
 impl Default for RenderJob {
     fn default() -> Self {
         Self {
-            num_frames: 40,
+            total_frames: 40,
+            samples_per_pixel: 128/4,
+            width: 1280/4,
+            height: 720/4,
         }
     }
 }
@@ -61,7 +60,6 @@ struct RenderStatus {
     job: RenderJob,
     frames: Vec<RenderFrame>,
     gif: Option<Vec<u8>>,
-    total_frames: usize,
 }
 
 impl Default for RenderStatus {
@@ -70,7 +68,6 @@ impl Default for RenderStatus {
             job: Default::default(),
             frames: vec![],
             gif: None,
-            total_frames: 0,
         }
     }
 }
@@ -124,9 +121,7 @@ impl Handler<MyMsg> for MyWs {
             MyMsg::Frame(d) => ctx.binary(d),
             MyMsg::Reset(job) =>
                 ctx.text(serde_json::json!({
-                    "width": WIDTH,
-                    "height": HEIGHT,
-                    "total_frames": job.total_frames(),
+                    "job": job,
                     "job_fields": render_job_fields(),
                 }).to_string()),
         }
@@ -195,8 +190,7 @@ async fn index() -> HttpResponse {
 }
 
 fn reset_job(job: RenderJob, state: &mut MyServerDataInner) {
-    let total_frames = job.total_frames();
-    state.render = RenderStatus { job, frames: vec![], gif: None, total_frames };
+    state.render = RenderStatus { job, frames: vec![], gif: None };
     // Reset clients to receive the new job config
     for (_, cs) in state.clients.iter_mut() {
         *cs = ClientState::NeedsConfig
@@ -259,7 +253,7 @@ pub fn main(addr: String) {
                     }
                     // Block until we find a job requiring work
                     // Careful with locking around this one, it can block forever
-                    if thread_state.with(|s| s.render.frames.len() == s.render.total_frames) {
+                    if thread_state.with(|s| s.render.frames.len() == s.render.job.total_frames) {
                         match job_rx.recv_timeout(Duration::from_millis(100)) {
                             Ok(job) => reset_job(job, &mut thread_state.lock()),
                             Err(crossbeam::channel::RecvTimeoutError::Timeout) => (),
@@ -275,29 +269,31 @@ pub fn main(addr: String) {
                     }
                 }
 
-                let (delta_idx, total_frames, has_gif) = thread_state.with(|s| (s.render.frames.len(), s.render.total_frames, s.render.gif.is_some()));
-                if delta_idx != total_frames {
+                let (delta_idx, job, has_gif) = thread_state.with(|s| (
+                    s.render.frames.len(), s.render.job.clone(), s.render.gif.is_some()
+                ));
+                if delta_idx != job.total_frames {
                     // Process next frame of current job
-                    let delta_increment = PAN_RANGE / total_frames as f32;
-                    let delta_mult = (-(total_frames as f32) * delta_increment / 2.) + (delta_idx as f32 * delta_increment);
-                    let cam = one_weekend_cam_lookat(WIDTH, HEIGHT, lookat + (Point3::ONE * delta_mult));
-                    let render_worker = render::Renderer::new(WIDTH as u32, HEIGHT as u32, SAMPLES_PER_PIXEL, scene.clone(), cam);
-                    let buffer_display = render_and_return(&render_worker, &mut pool);
+                    let delta_increment = PAN_RANGE / job.total_frames as f32;
+                    let delta_mult = (-(job.total_frames as f32) * delta_increment / 2.) + (delta_idx as f32 * delta_increment);
+                    let cam = one_weekend_cam_lookat(job.width.into(), job.height.into(), lookat + (Point3::ONE * delta_mult));
+                    let render_worker = render::Renderer::new(job.width.into(), job.height.into(), job.samples_per_pixel, scene.clone(), cam);
+                    let buffer_display = render_and_return(job.width.into(), job.height.into(), &render_worker, &mut pool);
                     println!("finished rendering a frame");
 
                     let mut png = vec![];
                     let pixels = u8_vec_from_buffer_display(&buffer_display);
-                    write_png(WIDTH, HEIGHT, &mut png, &pixels);
+                    write_png(job.width.into(), job.height.into(), &mut png, &pixels);
                     thread_state.lock().render.frames.push(RenderFrame { pixels, png });
                     println!("finished creating a png");
                 } else if !has_gif {
                     // We've finished all frames, create the gif
                     thread_state.with(|s| {
                         let mut gif = vec![];
-                        let mut encoder = gif::Encoder::new(&mut gif, WIDTH as u16, HEIGHT as u16, &[]).unwrap();
+                        let mut encoder = gif::Encoder::new(&mut gif, job.width, job.height, &[]).unwrap();
                         encoder.set_repeat(gif::Repeat::Infinite).unwrap();
                         for frame in s.render.frames.iter() {
-                            let frame = gif::Frame::from_rgb(WIDTH as u16, HEIGHT as u16, &frame.pixels);
+                            let frame = gif::Frame::from_rgb(job.width, job.height, &frame.pixels);
                             encoder.write_frame(&frame).unwrap();
                         }
                         drop(encoder);
@@ -314,7 +310,7 @@ pub fn main(addr: String) {
                                 // Send the config
                                 ClientState::NeedsConfig => (MyMsg::Reset(state.render.job.clone()), ClientState::NeedsFrame(0)),
                                 // Wants more frames, but the frames are finished - move onto the gif
-                                ClientState::NeedsFrame(i) if i == state.render.total_frames => {
+                                ClientState::NeedsFrame(i) if i == state.render.job.total_frames => {
                                     *cs = ClientState::NeedsGif;
                                     continue
                                 },
@@ -367,15 +363,15 @@ pub fn main(addr: String) {
 }
 
 // Boring all-in-one rendering of a frame
-fn render_and_return(render_worker: &render::Renderer, pool: &mut impl ParallelExecutor) -> Vec<ColorDisplay> {
+fn render_and_return(width: usize, height: usize, render_worker: &render::Renderer, pool: &mut impl ParallelExecutor) -> Vec<ColorDisplay> {
     render_worker.render_frame(pool);
-    let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
+    let mut buffer_display: Vec<ColorDisplay> = vec![0; width * height];
     loop {
         let render_results = render_worker.poll_results();
         match render_results {
             Some(render_results) => {
                 for result in render_results {
-                    let index = index_from_xy(WIDTH as u32, HEIGHT as u32, result.x, result.y);
+                    let index = index_from_xy(width as u32, height as u32, result.x, result.y);
                     buffer_display[index] = color_display_from_render(result.color);
                 }
             },
