@@ -220,18 +220,13 @@ fn main() {
     }
 }
 
-fn write_png(width: usize, height: usize, w: impl Write, buffer_display: &[ColorDisplay]) {
+fn write_png(width: usize, height: usize, w: impl Write, pixels: &[u8]) {
     // Write buffer_display as 8-bit RGB PNG
     let mut encoder = png::Encoder::new(w, width as u32, height as u32);
     encoder.set_color(png::ColorType::RGB);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().unwrap();
-
-    let data: Vec<u8> = buffer_display
-        .iter()
-        .flat_map(|x| u8_vec_from_color_display(*x))
-        .collect();
-    writer.write_image_data(&data).unwrap();
+    writer.write_image_data(pixels).unwrap();
 }
 
 fn window_main(out_file: Option<&str>) {
@@ -304,6 +299,7 @@ fn window_main(out_file: Option<&str>) {
         let file = File::create(path).unwrap();
         let ref mut w = BufWriter::new(file);
 
-        write_png(WIDTH, HEIGHT, w, &buffer_display);
+        let pixels = u8_vec_from_buffer_display(&buffer_display);
+        write_png(WIDTH, HEIGHT, w, &pixels);
     }
 }

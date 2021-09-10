@@ -39,7 +39,14 @@ pub struct RayQuery {
     pub t_max: f32,
 }
 
-pub fn u8_vec_from_color_display(c: ColorDisplay) -> Vec<u8> {
+pub fn u8_vec_from_buffer_display(bd: &[ColorDisplay]) -> Vec<u8> {
+    bd
+        .into_iter()
+        .flat_map(|x| u8_vec_from_color_display(*x))
+        .collect()
+}
+
+fn u8_vec_from_color_display(c: ColorDisplay) -> Vec<u8> {
     let b = c as u8;
     let g = (c >> 8) as u8;
     let r = (c >> 16) as u8;

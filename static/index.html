@@ -7,11 +7,22 @@
 <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 <style>
-    img.thumb {
+    .main {
+        display: flex;
+        justify-content: center;
+    }
+    .main img {
+        margin: 10px;
+        border: 2px black solid;
+    }
+    .thumbs {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+    .thumbs img {
         margin: 2px;
         border: 1px black solid;
-        max-height: 50px;
-        max-width: 50px;
     }
 </style>
 </head>
@@ -21,6 +32,7 @@
 <script type="text/babel">
 
     let BLACK_PIXEL = "data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    let THUMB_MAX_PX_DIMENSION = 50;
 
     let ws = new WebSocket("ws://127.0.0.1:8888/ws");
 
@@ -32,23 +44,38 @@
 
     function handleWSMessage(msg) {
         if (typeof msg.data === 'string') {
+            // Strings are JSON-formatted config messages that reset rendering
+
             let config = JSON.parse(msg.data);
             this.setState({
                 config,
-                frames: [],
+                nextFrame: 0,
+                frames: Array(config.total_frames).fill(null),
+                gif: null,
             });
+
         } else if (msg.data instanceof Blob) {
-            // Reserve a slot for this frame
-            let frames = this.state.frames.slice();
-            let idx = frames.length;
-            frames.push(null);
-            this.setState({ frames });
-            // Convert to a data url and actually add to the slot when it's ready
-            blobToDataURL(msg.data, (frame) => {
-                let frames = this.state.frames.slice();
-                frames[idx] = frame;
-                this.setState({ frames });
-            });
+            // Blobs are either a rendered frame or a gif
+
+            if (this.state.nextFrame === this.state.config.total_frames) {
+                // If we've already got all frames it must be the gif
+                blobToDataURL(msg.data, (gif) => this.setState({ gif }));
+
+            } else {
+                // Otherwise it's a frame
+
+                // Reserve a slot for this frame
+                let idx = this.state.nextFrame;
+                this.setState({ nextFrame: this.state.nextFrame + 1 });
+
+                // Convert to a data url and actually add to the slot when it's ready
+                blobToDataURL(msg.data, (frame) => {
+                    let frames = this.state.frames.slice();
+                    frames[idx] = frame;
+                    this.setState({ frames });
+                });
+            }
+
         } else {
             console.log('unknown websocket msg', msg);
         }
@@ -59,23 +86,35 @@
             super(props);
             ws.onmessage = handleWSMessage.bind(this);
             this.state = {
-                config: {width: 0, height: 0, total_frames: 0},
+                config: { width: 0, height: 0, total_frames: 0 },
+                nextFrame: 0,
                 frames: [],
+                gif: null,
             };
         }
 
-        render() {
-            let { config, frames } = this.state;
+        handleClick() {
+            ws.send(JSON.stringify({}));
+        }
 
+        render() {
+            let { config, nextFrame, frames, gif } = this.state;
+
+            let max_dimension = Math.max(config.width, config.height);
+            let scale_factor = THUMB_MAX_PX_DIMENSION / max_dimension;
+            let width = config.width * scale_factor;
+            let height = config.height * scale_factor;
             let frames_display = frames.map((frame, i) => {
                 let src = frame === null ? BLACK_PIXEL : frame;
-                return <img key={i} className="thumb" src={src}></img>
+                return <img key={i} width={width} height={height} src={src}></img>
             });
 
             return (
                 <div>
-                    <div>Rendered {frames.length} of {config.total_frames} frames</div>
-                    {frames_display}
+                    <button onClick={this.handleClick}>Re-render</button>
+                    <div>Rendered {nextFrame} of {config.total_frames} frames</div>
+                    <div className="main"><img width={config.width} height={config.height} src={gif === null ? BLACK_PIXEL : gif}></img></div>
+                    <div className="thumbs">{frames_display}</div>
                 </div>
             );
         }
