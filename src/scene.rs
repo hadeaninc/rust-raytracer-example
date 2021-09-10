@@ -1,5 +1,5 @@
-use crate::object::*;
-use crate::shared::*;
+use crate::object::{HitRecord, HittableBounds, RayHittable, Sphere};
+use crate::shared::RayQuery;
 
 use bvh::bvh::BVH;
 use serde::{Serialize, Deserialize};

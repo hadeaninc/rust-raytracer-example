@@ -1,7 +1,8 @@
+use rand::Rng;
 use serde::{Serialize, Deserialize};
 
-use crate::object::*;
-use crate::shared::*;
+use crate::object::HitRecord;
+use crate::shared::{Color, Ray, Vec3, VecExt, random_in_unit_sphere, reflectance, random_unit_vector, vec_reflect, vec_refract};
 
 /// A material which can scatter rays
 #[derive(Copy, Clone)]

@@ -1,6 +1,6 @@
 use serde::{Serialize, Deserialize};
 
-use crate::shared::*;
+use crate::shared::{Point3, Ray, Vec3, degrees_to_radians, random_in_unit_disk};
 
 /// Representation of a camera in the scene
 #[derive(Clone)]

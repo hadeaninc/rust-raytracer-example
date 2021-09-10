@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
 
-use crate::material::*;
-use crate::shared::*;
+use crate::material::Material;
+use crate::shared::{AABB, BHShape, Bounded, Point3, Ray, RayQuery, Vec3};
 
 /// Information of a ray hit
 pub struct HitRecord {

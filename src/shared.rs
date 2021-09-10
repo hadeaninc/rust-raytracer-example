@@ -1,7 +1,7 @@
 pub use bvh::aabb::{Bounded, AABB};
 pub use bvh::bounding_hierarchy::{BHShape, BoundingHierarchy};
 pub use glam::Vec3;
-pub use rand::Rng;
+use rand::Rng;
 
 pub type Point3 = glam::Vec3;
 pub type Color = glam::Vec3;
@@ -76,11 +76,6 @@ pub fn vec3_random_range(min: f32, max: f32) -> Vec3 {
         rng.gen_range(min..max),
         rng.gen_range(min..max),
     );
-}
-
-#[allow(dead_code)]
-pub fn vec3_random() -> Vec3 {
-    return vec3_random_range(0.0, 1.0);
 }
 
 pub fn random_in_unit_sphere() -> Vec3 {

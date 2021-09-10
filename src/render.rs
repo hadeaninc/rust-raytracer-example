@@ -1,11 +1,12 @@
 use futures::prelude::*;
+use rand::Rng;
 use serde::{Serialize, Deserialize};
 use spiral::ChebyshevIterator;
 
-use crate::camera::*;
+use crate::camera::Camera;
 use crate::parallel::ParallelExecutor;
-use crate::scene::*;
-use crate::shared::*;
+use crate::scene::Scene;
+use crate::shared::{TRACE_EPSILON, TRACE_INFINITY, Color, Ray, RayQuery, ceil_div, rgb_from_render};
 
 /// Coordinates for a block to render
 #[derive(Copy, Clone)]

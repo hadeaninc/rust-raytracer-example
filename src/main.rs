@@ -8,13 +8,13 @@ mod shared;
 
 use std::env;
 use std::process;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 
-use camera::*;
-use material::*;
-use object::*;
-use scene::*;
-use shared::*;
+use camera::Camera;
+use material::{Dielectric, Lambertian, Material, Metal};
+use object::Sphere;
+use scene::Scene;
+use shared::{Color, Point3, Vec3, color_random, color_random_range};
 
 mod parallel {
     use futures::executor::ThreadPool;
