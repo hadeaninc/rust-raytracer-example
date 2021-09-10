@@ -1,46 +1,89 @@
 <!doctype html>
 <html lang="en" class="no-js">
+
 <head>
-    <meta charset="utf-8">
-    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
-    <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<meta charset="utf-8">
+<script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<style>
+    img.thumb {
+        margin: 2px;
+        border: 1px black solid;
+        max-height: 50px;
+        max-width: 50px;
+    }
+</style>
 </head>
+
 <body>
-    <div id="root">
-    </div>
-    <script type="text/babel">
+<div id="root"></div>
+<script type="text/babel">
 
-        let ws = new WebSocket("ws://127.0.0.1:8888/ws");
+    let BLACK_PIXEL = "data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
-        function blobToDataURL(blob, callback) {
-            var a = new FileReader();
-            a.onload = function (e) {callback(e.target.result);}
-            a.readAsDataURL(blob);
+    let ws = new WebSocket("ws://127.0.0.1:8888/ws");
+
+    function blobToDataURL(blob, callback) {
+        var a = new FileReader();
+        a.onload = function (e) {callback(e.target.result);}
+        a.readAsDataURL(blob);
+    }
+
+    function handleWSMessage(msg) {
+        if (typeof msg.data === 'string') {
+            let config = JSON.parse(msg.data);
+            this.setState({
+                config,
+                frames: [],
+            });
+        } else if (msg.data instanceof Blob) {
+            // Reserve a slot for this frame
+            let frames = this.state.frames.slice();
+            let idx = frames.length;
+            frames.push(null);
+            this.setState({ frames });
+            // Convert to a data url and actually add to the slot when it's ready
+            blobToDataURL(msg.data, (frame) => {
+                let frames = this.state.frames.slice();
+                frames[idx] = frame;
+                this.setState({ frames });
+            });
+        } else {
+            console.log('unknown websocket msg', msg);
+        }
+    }
+
+    class Root extends React.Component {
+        constructor(props) {
+            super(props);
+            ws.onmessage = handleWSMessage.bind(this);
+            this.state = {
+                config: {width: 0, height: 0, total_frames: 0},
+                frames: [],
+            };
         }
 
-        class Root extends React.Component {
-            constructor(props) {
-                super(props);
-                ws.onmessage = (event) => {
-                    blobToDataURL(event.data, (frame) => {
-                        this.setState({ frame });
-                    });
-                };
-                this.state = {
-                    'frame': null,
-                };
-            }
-            render() {
-                return (
-                    <div>
-                        <div>Rendering, please wait</div>
-                        {this.state.frame !== null ? <img src={this.state.frame}></img> : "waiting for first render image"}
-                    </div>
-                );
-            }
+        render() {
+            let { config, frames } = this.state;
+
+            let frames_display = frames.map((frame, i) => {
+                let src = frame === null ? BLACK_PIXEL : frame;
+                return <img key={i} className="thumb" src={src}></img>
+            });
+
+            return (
+                <div>
+                    <div>Rendered {frames.length} of {config.total_frames} frames</div>
+                    {frames_display}
+                </div>
+            );
         }
-        ReactDOM.render(<Root />, document.getElementById('root'));
-    </script>
+    }
+
+    ReactDOM.render(<Root />, document.getElementById('root'));
+
+</script>
 </body>
+
 </html>
