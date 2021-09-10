@@ -15,9 +15,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::parallel::{self, ParallelExecutor};
 use crate::render;
 use crate::shared::{ColorDisplay, Point3, color_display_from_render, index_from_xy, u8_vec_from_buffer_display};
-use crate::{one_weekend_cam_lookat, one_weekend_scene, write_png};
+use crate::{one_weekend_cam_lookat, one_weekend_scene};
 
 static INDEX_HTML: &[u8] = include_bytes!("../static/index.html");
+
+const THUMB_MAX_PX: u32 = 50;
 
 // Want to range from -5 to +5
 const PAN_RANGE: f32 = 10.;
@@ -272,6 +274,7 @@ pub fn main(addr: String) {
                 let (delta_idx, job, has_gif) = thread_state.with(|s| (
                     s.render.frames.len(), s.render.job.clone(), s.render.gif.is_some()
                 ));
+
                 if delta_idx != job.total_frames {
                     // Process next frame of current job
                     let delta_increment = PAN_RANGE / job.total_frames as f32;
@@ -283,18 +286,20 @@ pub fn main(addr: String) {
 
                     let mut png = vec![];
                     let pixels = u8_vec_from_buffer_display(&buffer_display);
-                    write_png(job.width.into(), job.height.into(), &mut png, &pixels);
+                    let imageslice = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(job.width.into(), job.height.into(), &*pixels).unwrap();
+                    let thumb = image::DynamicImage::ImageRgb8(image::imageops::thumbnail(&imageslice, THUMB_MAX_PX, THUMB_MAX_PX));
+                    thumb.write_to(&mut png, image::ImageOutputFormat::Png).unwrap();
                     thread_state.lock().render.frames.push(RenderFrame { pixels, png });
                     println!("finished creating a png");
+
                 } else if !has_gif {
                     // We've finished all frames, create the gif
                     thread_state.with(|s| {
                         let mut gif = vec![];
-                        let mut encoder = gif::Encoder::new(&mut gif, job.width, job.height, &[]).unwrap();
-                        encoder.set_repeat(gif::Repeat::Infinite).unwrap();
+                        let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+                        encoder.set_repeat(image::codecs::gif::Repeat::Infinite).unwrap();
                         for frame in s.render.frames.iter() {
-                            let frame = gif::Frame::from_rgb(job.width, job.height, &frame.pixels);
-                            encoder.write_frame(&frame).unwrap();
+                            encoder.encode(&frame.pixels, job.width.into(), job.height.into(), image::ColorType::Rgb8).unwrap();
                         }
                         drop(encoder);
                         s.render.gif = Some(gif);

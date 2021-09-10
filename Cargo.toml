@@ -15,17 +15,16 @@ actix-web-actors = "3.0"
 serde_json = "1.0"
 
 # https://github.com/emoon/rust_minifb/issues/256 - wayland doesn't update the window
-minifb = { optional = true, version = "0.19.3", features = ["x11"], default-features = false }
+bvh = { version = "0.6", features = ["serde_impls"] }
 crossbeam = "0.6"
 crossbeam-channel = "0.4"
 glam = { version = "0.18", features = ["serde"] }
-bvh = { version = "0.6", features = ["serde_impls"] }
-rand = "0.8.3"
-spiral = "0.1.9"
-png = "0.16.8"
+image = { version = "0.23", default-features = false, features = ["gif", "png"] }
+minifb = { optional = true, version = "0.19.3", features = ["x11"], default-features = false }
 num_cpus = "1.13.0"
+rand = "0.8.3"
 rand_pcg = "0.3.0"
-gif = "0.11"
+spiral = "0.1.9"
 
 futures = { version = "0.3", features = ["executor", "thread-pool"] }
 serde = { version = "1", features = ["derive"] }

@@ -7,7 +7,6 @@ mod server;
 mod shared;
 
 use std::env;
-use std::io::Write;
 use std::process;
 use rand::SeedableRng;
 
@@ -196,15 +195,6 @@ fn main() {
     }
 }
 
-fn write_png(width: usize, height: usize, w: impl Write, pixels: &[u8]) {
-    // Write buffer_display as 8-bit RGB PNG
-    let mut encoder = png::Encoder::new(w, width as u32, height as u32);
-    encoder.set_color(png::ColorType::RGB);
-    encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().unwrap();
-    writer.write_image_data(pixels).unwrap();
-}
-
 #[cfg(not(feature = "gui"))]
 mod window {
     use std::process;
@@ -219,15 +209,12 @@ mod window {
 mod window {
     use futures::prelude::*;
     use minifb::{Key, Window, WindowOptions};
-    use std::fs::File;
-    use std::io::BufWriter;
-    use std::path::Path;
 
     use crate::camera::Camera;
     use crate::parallel;
     use crate::render;
     use crate::shared::{ColorDisplay, Point3, color_display_from_render, index_from_xy, u8_vec_from_buffer_display};
-    use crate::{one_weekend_scene, write_png};
+    use crate::{one_weekend_scene};
 
     fn one_weekend_cam(width: usize, height: usize) -> Camera {
         super::one_weekend_cam_lookat(width, height, Point3::new(0.0, 0.0, 0.0))
@@ -305,12 +292,9 @@ mod window {
 
         // If we get one argument, assume it's our output png filename
         if let Some(out_file) = out_file {
-            let path = Path::new(out_file);
-            let file = File::create(path).unwrap();
-            let ref mut w = BufWriter::new(file);
-
             let pixels = u8_vec_from_buffer_display(&buffer_display);
-            write_png(WIDTH, HEIGHT, w, &pixels);
+            let img = image::DynamicImage::ImageRgb8(image::RgbImage::from_raw(WIDTH as u32, HEIGHT as u32, pixels).unwrap());
+            img.save(out_file).unwrap();
         }
     }
 }
