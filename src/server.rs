@@ -24,15 +24,31 @@ const HEIGHT: usize = 720/4;
 const SAMPLES_PER_PIXEL: u32 = 128/4;
 
 // Want to range from -5 to +5
-const NUM_FRAMES: usize = 40;
-const DELTA_INCREMENT: f32 = 10. / NUM_FRAMES as f32;
+const PAN_RANGE: f32 = 10.;
 
+#[derive(Clone)]
 #[derive(Serialize, Deserialize)]
-struct RenderJob {}
+struct RenderJob {
+    num_frames: usize,
+}
+
+fn render_job_fields() -> serde_json::Value {
+    serde_json::json!([
+        ["num_frames", "integer"],
+    ])
+}
 
 impl RenderJob {
     fn total_frames(&self) -> usize {
-        NUM_FRAMES
+        self.num_frames
+    }
+}
+
+impl Default for RenderJob {
+    fn default() -> Self {
+        Self {
+            num_frames: 40,
+        }
     }
 }
 
@@ -46,6 +62,17 @@ struct RenderStatus {
     frames: Vec<RenderFrame>,
     gif: Option<Vec<u8>>,
     total_frames: usize,
+}
+
+impl Default for RenderStatus {
+    fn default() -> Self {
+        Self {
+            job: Default::default(),
+            frames: vec![],
+            gif: None,
+            total_frames: 0,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -82,7 +109,7 @@ struct MyWs {
 
 enum MyMsg {
     Frame(Vec<u8>),
-    Reset(usize),
+    Reset(RenderJob),
 }
 
 impl Message for MyMsg {
@@ -95,11 +122,12 @@ impl Handler<MyMsg> for MyWs {
     fn handle(&mut self, msg: MyMsg, ctx: &mut Self::Context) {
         match msg {
             MyMsg::Frame(d) => ctx.binary(d),
-            MyMsg::Reset(total_frames) =>
+            MyMsg::Reset(job) =>
                 ctx.text(serde_json::json!({
                     "width": WIDTH,
                     "height": HEIGHT,
-                    "total_frames": total_frames,
+                    "total_frames": job.total_frames(),
+                    "job_fields": render_job_fields(),
                 }).to_string()),
         }
     }
@@ -166,20 +194,25 @@ async fn index() -> HttpResponse {
     HttpResponse::Ok().set(ContentType::html()).encoding(ContentEncoding::Gzip).body(INDEX_HTML)
 }
 
+fn reset_job(job: RenderJob, state: &mut MyServerDataInner) {
+    let total_frames = job.total_frames();
+    state.render = RenderStatus { job, frames: vec![], gif: None, total_frames };
+    // Reset clients to receive the new job config
+    for (_, cs) in state.clients.iter_mut() {
+        *cs = ClientState::NeedsConfig
+    }
+}
+
 pub fn main(addr: String) {
     let (job_tx, job_rx) = crossbeam::channel::unbounded();
-    job_tx.send(RenderJob {}).unwrap();
+    job_tx.send(Default::default()).unwrap(); // Reset to a valid job
+
     let state = MyServerData {
         inner: Arc::new(Mutex::new(
             MyServerDataInner {
                 clients: HashMap::new(),
                 job_tx,
-                render: RenderStatus {
-                    job: RenderJob {},
-                    frames: vec![],
-                    gif: None,
-                    total_frames: 0,
-                },
+                render: Default::default(),
             }
         ))
     };
@@ -204,15 +237,6 @@ pub fn main(addr: String) {
             let mut scene = one_weekend_scene();
             scene.build_bvh();
             let lookat = Point3::ZERO;
-
-            fn reset_job(job: RenderJob, state: &mut MyServerDataInner) {
-                let total_frames = job.total_frames();
-                state.render = RenderStatus { job, frames: vec![], gif: None, total_frames };
-                // Reset clients to receive the new job config
-                for (_, cs) in state.clients.iter_mut() {
-                    *cs = ClientState::NeedsConfig
-                }
-            }
 
             loop {
                 if should_stop.load(Ordering::SeqCst) {
@@ -254,7 +278,8 @@ pub fn main(addr: String) {
                 let (delta_idx, total_frames, has_gif) = thread_state.with(|s| (s.render.frames.len(), s.render.total_frames, s.render.gif.is_some()));
                 if delta_idx != total_frames {
                     // Process next frame of current job
-                    let delta_mult = (-(total_frames as f32) * DELTA_INCREMENT / 2.) + (delta_idx as f32 * DELTA_INCREMENT);
+                    let delta_increment = PAN_RANGE / total_frames as f32;
+                    let delta_mult = (-(total_frames as f32) * delta_increment / 2.) + (delta_idx as f32 * delta_increment);
                     let cam = one_weekend_cam_lookat(WIDTH, HEIGHT, lookat + (Point3::ONE * delta_mult));
                     let render_worker = render::Renderer::new(WIDTH as u32, HEIGHT as u32, SAMPLES_PER_PIXEL, scene.clone(), cam);
                     let buffer_display = render_and_return(&render_worker, &mut pool);
@@ -287,7 +312,7 @@ pub fn main(addr: String) {
                         loop {
                             let (msg, next_cs) = match *cs {
                                 // Send the config
-                                ClientState::NeedsConfig => (MyMsg::Reset(state.render.total_frames), ClientState::NeedsFrame(0)),
+                                ClientState::NeedsConfig => (MyMsg::Reset(state.render.job.clone()), ClientState::NeedsFrame(0)),
                                 // Wants more frames, but the frames are finished - move onto the gif
                                 ClientState::NeedsFrame(i) if i == state.render.total_frames => {
                                     *cs = ClientState::NeedsGif;

@@ -7,20 +7,74 @@
 <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
 <style>
-    .main {
+    /* http://meyerweb.com/eric/tools/css/reset/
+       v2.0 | 20110126
+       License: none (public domain)
+    */
+
+    html, body, div, span, applet, object, iframe,
+    h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+    a, abbr, acronym, address, big, cite, code,
+    del, dfn, em, img, ins, kbd, q, s, samp,
+    small, strike, strong, sub, sup, tt, var,
+    b, u, i, center,
+    dl, dt, dd, ol, ul, li,
+    fieldset, form, label, legend,
+    table, caption, tbody, tfoot, thead, tr, th, td,
+    article, aside, canvas, details, embed,
+    figure, figcaption, footer, header, hgroup,
+    menu, nav, output, ruby, section, summary,
+    time, mark, audio, video {
+        margin: 0;
+        padding: 0;
+        border: 0;
+        font-size: 100%;
+        font: inherit;
+        vertical-align: baseline;
+    }
+    /* HTML5 display-role reset for older browsers */
+    article, aside, details, figcaption, figure,
+    footer, header, hgroup, menu, nav, section {
+        display: block;
+    }
+    body {
+        line-height: 1;
+    }
+    ol, ul {
+        list-style: none;
+    }
+    blockquote, q {
+        quotes: none;
+    }
+    blockquote:before, blockquote:after,
+    q:before, q:after {
+        content: '';
+        content: none;
+    }
+    table {
+        border-collapse: collapse;
+        border-spacing: 0;
+    }
+</style>
+<style>
+    /* Custom CSS */
+    #control {
+        border: 1px black solid;
+    }
+    #main {
         display: flex;
         justify-content: center;
     }
-    .main img {
+    #main img {
         margin: 10px;
         border: 2px black solid;
     }
-    .thumbs {
+    #thumbs {
         display: flex;
         justify-content: center;
         flex-wrap: wrap;
     }
-    .thumbs img {
+    #thumbs img {
         margin: 2px;
         border: 1px black solid;
     }
@@ -36,6 +90,10 @@
 
     let ws = new WebSocket("ws://127.0.0.1:8888/ws");
 
+    function shallowClone(o) {
+        return Object.assign({}, o);
+    }
+
     function blobToDataURL(blob, callback) {
         var a = new FileReader();
         a.onload = function (e) {callback(e.target.result);}
@@ -47,11 +105,16 @@
             // Strings are JSON-formatted config messages that reset rendering
 
             let config = JSON.parse(msg.data);
+            let job_entry = {};
+            config.job_fields.forEach(([field, _type]) => {
+                job_entry[field] = this.state.job_entry[field] || '';
+            });
             this.setState({
                 config,
                 nextFrame: 0,
                 frames: Array(config.total_frames).fill(null),
                 gif: null,
+                job_entry,
             });
 
         } else if (msg.data instanceof Blob) {
@@ -86,19 +149,47 @@
             super(props);
             ws.onmessage = handleWSMessage.bind(this);
             this.state = {
-                config: { width: 0, height: 0, total_frames: 0 },
+                config: { width: 0, height: 0, total_frames: 0, job_fields: [] },
                 nextFrame: 0,
                 frames: [],
                 gif: null,
+                job_entry: {},
             };
         }
 
+        handleJobEntryChange(field) {
+            return (ev) => {
+                let job_entry = shallowClone(this.state.job_entry);
+                job_entry[field] = ev.target.value;
+                this.setState({ job_entry });
+            }
+        }
+
         handleClick() {
-            ws.send(JSON.stringify({}));
+            let job_entry = {};
+            this.state.config.job_fields.forEach(([field, type]) => {
+                let strval = this.state.job_entry[field];
+                let value;
+                if (type === 'string') {
+                    value = strval;
+                } else if (type == 'integer') {
+                    value = parseInt(strval, 10);
+                } else if (type == 'float') {
+                    value = parseFloat(strval);
+                } else {
+                    console.log('unknown type', type, 'for field', field);
+                }
+                job_entry[field] = value;
+            })
+            ws.send(JSON.stringify(job_entry));
         }
 
         render() {
-            let { config, nextFrame, frames, gif } = this.state;
+            let { config, nextFrame, frames, gif, job_entry } = this.state;
+
+            let params_display = <div>{config.job_fields.map(([field, _type], i) =>
+                <div key={field}>{field}: <input onChange={this.handleJobEntryChange(field)} value={job_entry[field]}></input></div>
+            )}</div>;
 
             let max_dimension = Math.max(config.width, config.height);
             let scale_factor = THUMB_MAX_PX_DIMENSION / max_dimension;
@@ -109,12 +200,19 @@
                 return <img key={i} width={width} height={height} src={src}></img>
             });
 
+            let configWithoutFields = shallowClone(config);
+            delete configWithoutFields.job_fields;
+
             return (
                 <div>
-                    <button onClick={this.handleClick}>Re-render</button>
-                    <div>Rendered {nextFrame} of {config.total_frames} frames</div>
-                    <div className="main"><img width={config.width} height={config.height} src={gif === null ? BLACK_PIXEL : gif}></img></div>
-                    <div className="thumbs">{frames_display}</div>
+                    <div id="control">
+                        <h1>Hadean Renderer</h1>
+                        {params_display}
+                        <button onClick={this.handleClick.bind(this)}>Re-render</button>
+                        <div>Rendered {nextFrame} of {config.total_frames} frames for {JSON.stringify(configWithoutFields)}</div>
+                    </div>
+                    <div id="main"><img width={config.width} height={config.height} src={gif === null ? BLACK_PIXEL : gif}></img></div>
+                    <div id="thumbs">{frames_display}</div>
                 </div>
             );
         }
