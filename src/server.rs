@@ -1,6 +1,7 @@
 use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, Running, StreamHandler};
 use actix_web::{App, Error, HttpResponse, HttpRequest, HttpServer};
-use actix_web::http::header::ContentEncoding;
+use actix_web::dev::BodyEncoding;
+use actix_web::http::header::{ContentEncoding, ContentType};
 use actix_web::middleware;
 use actix_web::web;
 use actix_web_actors::ws;
@@ -15,6 +16,8 @@ use crate::render;
 use crate::shared::{ColorDisplay, Point3, color_display_from_render, index_from_xy, u8_vec_from_buffer_display};
 
 use super::{one_weekend_cam_lookat, one_weekend_scene, write_png};
+
+static INDEX_HTML: &[u8] = include_bytes!("../static/index.html");
 
 const WIDTH: usize = 1280/4;
 const HEIGHT: usize = 720/4;
@@ -159,6 +162,10 @@ async fn ws(state: ServerData, req: HttpRequest, stream: web::Payload) -> Result
     resp
 }
 
+async fn index() -> HttpResponse {
+    HttpResponse::Ok().set(ContentType::html()).encoding(ContentEncoding::Gzip).body(INDEX_HTML)
+}
+
 pub fn main(addr: String) {
     let (job_tx, job_rx) = crossbeam::channel::unbounded();
     job_tx.send(RenderJob {}).unwrap();
@@ -184,7 +191,7 @@ pub fn main(addr: String) {
         let app = app.wrap(middleware::Logger::default());
         let app = app.wrap(middleware::Compress::new(ContentEncoding::Auto));
         let app = app.route("/ws", web::get().to(ws));
-        let app = app.service(actix_files::Files::new("/", "static").index_file("index.html"));
+        let app = app.route("/", web::get().to(index));
         app
     };
 

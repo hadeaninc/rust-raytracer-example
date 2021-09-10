@@ -7,9 +7,7 @@ mod server;
 mod shared;
 
 use std::env;
-use std::fs::File;
-use std::io::{BufWriter, Write};
-use std::path::Path;
+use std::io::Write;
 use std::process;
 use rand::SeedableRng;
 
@@ -18,8 +16,6 @@ use material::*;
 use object::*;
 use scene::*;
 use shared::*;
-
-use minifb::{Key, Window, WindowOptions};
 
 mod parallel {
     use futures::executor::ThreadPool;
@@ -69,26 +65,6 @@ mod parallel {
     pub fn default_pool(cores: usize) -> impl ParallelExecutor {
         ThreadPool::builder().pool_size(cores).create().unwrap()
     }
-}
-
-fn one_weekend_cam(width: usize, height: usize) -> Camera {
-    let aspect_ratio = (width as f32) / (height as f32);
-
-    let lookfrom = Point3::new(13.0, 2.0, 3.0);
-    let lookat = Point3::new(0.0, 0.0, 0.0);
-    let vup = Vec3::new(0.0, 1.0, 0.0);
-    let dist_to_focus = 10.0;
-    let aperture = 0.1;
-
-    Camera::new(
-        lookfrom,
-        lookat,
-        vup,
-        20.0,
-        aspect_ratio,
-        aperture,
-        dist_to_focus,
-    )
 }
 
 fn one_weekend_cam_lookat(width: usize, height: usize, lookat: Point3) -> Camera {
@@ -205,12 +181,12 @@ fn main() {
 
     if args.len() == 2 && args[1] == "serve" {
 
-        server::main("127.0.0.1:8888".to_owned());
+        server::main("0.0.0.0:8888".to_owned());
 
     } else if args.len() >= 2 && args[1] == "window" {
 
         let out_file = if args.len() > 2 { Some(args[2].as_str()) } else { None };
-        window_main(out_file);
+        window::main(out_file);
 
     } else {
 
@@ -229,77 +205,99 @@ fn write_png(width: usize, height: usize, w: impl Write, pixels: &[u8]) {
     writer.write_image_data(pixels).unwrap();
 }
 
-fn window_main(out_file: Option<&str>) {
-    const WIDTH: usize = 1280;
-    const HEIGHT: usize = 720;
-    const SAMPLES_PER_PIXEL: u32 = 128;
+#[cfg(not(feature = "gui"))]
+mod window {
+    use std::process;
 
-    #[cfg(feature = "distributed")]
-    std::env::set_var("DISPLAY", ":0"); // hack around hadean environment variables for local runs
+    pub fn main(_out_file: Option<&str>) {
+        println!("gui support not compiled in - please recompile with 'gui' feature");
+        process::exit(1);
+    }
+}
 
-    let mut window = Window::new(
-        "Ray tracing in one weekend - ESC to exit",
-        WIDTH,
-        HEIGHT,
-        WindowOptions::default(),
-    )
-    .unwrap_or_else(|e| {
-        panic!("{}", e);
-    });
+#[cfg(feature = "gui")]
+mod window {
+    use minifb::{Key, Window, WindowOptions};
+    use std::fs::File;
+    use std::io::BufWriter;
+    use std::path::Path;
 
-    // Limit to max ~60 fps update rate
-    window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
+    fn one_weekend_cam(width: usize, height: usize) -> Camera {
+        super::one_weekend_cam_lookat(width, height, Point3::new(0.0, 0.0, 0.0))
+    }
 
-    let mut scene = one_weekend_scene();
-    scene.build_bvh();
-    let cam = one_weekend_cam(WIDTH, HEIGHT);
+    pub fn main(out_file: Option<&str>) {
+        const WIDTH: usize = 1280;
+        const HEIGHT: usize = 720;
+        const SAMPLES_PER_PIXEL: u32 = 128;
 
-    let render_worker =
-        render::Renderer::new(WIDTH as u32, HEIGHT as u32, SAMPLES_PER_PIXEL, scene, cam);
+        #[cfg(feature = "distributed")]
+        std::env::set_var("DISPLAY", ":0"); // hack around hadean environment variables for local runs
 
-    let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
-
-    crossbeam::scope(|scope| {
-        // Start the render thread
-        scope.spawn(|_| {
-            let mut pool = parallel::default_pool(num_cpus::get());
-            render_worker.render_frame(&mut pool);
+        let mut window = Window::new(
+            "Ray tracing in one weekend - ESC to exit",
+            WIDTH,
+            HEIGHT,
+            WindowOptions::default(),
+        )
+        .unwrap_or_else(|e| {
+            panic!("{}", e);
         });
 
-        // Window loop
-        while window.is_open() && !window.is_key_down(Key::Escape) {
-            // Fetch rendered pixels
-            let has_changed = match render_worker.poll_results() {
-                Some(render_results) => {
-                    let has_changed = !render_results.is_empty();
-                    for result in render_results {
-                        let index = index_from_xy(WIDTH as u32, HEIGHT as u32, result.x, result.y);
-                        buffer_display[index] = color_display_from_render(result.color);
-                    };
-                    has_changed
-                },
-                None => false,
-            };
-            if has_changed {
-                window
-                    .update_with_buffer(&buffer_display, WIDTH, HEIGHT)
-                    .unwrap();
-            } else {
-                window.update();
+        // Limit to max ~60 fps update rate
+        window.limit_update_rate(Some(std::time::Duration::from_micros(16600)));
+
+        let mut scene = one_weekend_scene();
+        scene.build_bvh();
+        let cam = one_weekend_cam(WIDTH, HEIGHT);
+
+        let render_worker =
+            render::Renderer::new(WIDTH as u32, HEIGHT as u32, SAMPLES_PER_PIXEL, scene, cam);
+
+        let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
+
+        crossbeam::scope(|scope| {
+            // Start the render thread
+            scope.spawn(|_| {
+                let mut pool = parallel::default_pool(num_cpus::get());
+                render_worker.render_frame(&mut pool);
+            });
+
+            // Window loop
+            while window.is_open() && !window.is_key_down(Key::Escape) {
+                // Fetch rendered pixels
+                let has_changed = match render_worker.poll_results() {
+                    Some(render_results) => {
+                        let has_changed = !render_results.is_empty();
+                        for result in render_results {
+                            let index = index_from_xy(WIDTH as u32, HEIGHT as u32, result.x, result.y);
+                            buffer_display[index] = color_display_from_render(result.color);
+                        };
+                        has_changed
+                    },
+                    None => false,
+                };
+                if has_changed {
+                    window
+                        .update_with_buffer(&buffer_display, WIDTH, HEIGHT)
+                        .unwrap();
+                } else {
+                    window.update();
+                }
             }
+
+            render_worker.stop();
+        })
+        .unwrap();
+
+        // If we get one argument, assume it's our output png filename
+        if let Some(out_file) = out_file {
+            let path = Path::new(out_file);
+            let file = File::create(path).unwrap();
+            let ref mut w = BufWriter::new(file);
+
+            let pixels = u8_vec_from_buffer_display(&buffer_display);
+            write_png(WIDTH, HEIGHT, w, &pixels);
         }
-
-        render_worker.stop();
-    })
-    .unwrap();
-
-    // If we get one argument, assume it's our output png filename
-    if let Some(out_file) = out_file {
-        let path = Path::new(out_file);
-        let file = File::create(path).unwrap();
-        let ref mut w = BufWriter::new(file);
-
-        let pixels = u8_vec_from_buffer_display(&buffer_display);
-        write_png(WIDTH, HEIGHT, w, &pixels);
     }
 }
