@@ -85,10 +85,10 @@
 <div id="root"></div>
 <script type="text/babel">
 
-    let BLACK_PIXEL = "data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    let BLACK_PIXEL = 'data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
     let THUMB_MAX_PX_DIMENSION = 50;
 
-    let ws = new WebSocket("ws://127.0.0.1:8888/ws");
+    let ws = new WebSocket('ws://' + window.location.host + '/ws');
 
     function shallowClone(o) {
         return Object.assign({}, o);

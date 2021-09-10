@@ -181,7 +181,7 @@ fn main() {
 
     if args.len() == 2 && args[1] == "serve" {
 
-        server::main("0.0.0.0:8888".to_owned());
+        server::main("0.0.0.0:28888".to_owned());
 
     } else if args.len() >= 2 && args[1] == "window" {
 
