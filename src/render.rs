@@ -1,9 +1,5 @@
-use spiral::ChebyshevIterator;
-
-use crossbeam_channel::bounded;
-use futures::StreamExt;
 use serde::{Serialize, Deserialize};
-use std::sync::atomic::{AtomicBool, Ordering};
+use spiral::ChebyshevIterator;
 
 use crate::camera::*;
 use crate::parallel::ParallelExecutor;
@@ -88,7 +84,7 @@ pub struct PixelResult {
 }
 
 /// Recursive ray tracing
-fn ray_color(ray: Ray, scene: &Scene, depth: i32, ray_count: &mut u32) -> Color {
+fn ray_color(ray: Ray, scene: &Scene, depth: i32) -> Color {
     if depth <= 0 {
         return Color::ZERO;
     }
@@ -100,7 +96,6 @@ fn ray_color(ray: Ray, scene: &Scene, depth: i32, ray_count: &mut u32) -> Color 
         t_max: TRACE_INFINITY,
     };
     let hit_option = scene.intersect(query);
-    *ray_count += 1;
 
     // If we hit something
     if let Some(hit) = hit_option {
@@ -109,7 +104,7 @@ fn ray_color(ray: Ray, scene: &Scene, depth: i32, ray_count: &mut u32) -> Color 
         // Recurse
         if let Some(scatter) = scatter_option {
             return scatter.attenuation
-                * ray_color(scatter.scattered_ray, scene, depth - 1, ray_count);
+                * ray_color(scatter.scattered_ray, scene, depth - 1);
         }
 
         return Color::ZERO;
@@ -121,17 +116,14 @@ fn ray_color(ray: Ray, scene: &Scene, depth: i32, ray_count: &mut u32) -> Color 
     return (1.0 - t) * Color::new(1.0, 1.0, 1.0) + t * Color::new(0.5, 0.7, 1.0);
 }
 
-/// Renderer which generates pixels using the scene and camera, and sends them back using a crossbeam channel
+/// Renderer which generates pixels using the scene and camera, and returns them via a stream
 pub struct Renderer {
     image_width: u32,
     image_height: u32,
-    channel_sender: crossbeam_channel::Sender<PixelResult>,
-    channel_receiver: crossbeam_channel::Receiver<PixelResult>,
     scene: Scene,
     camera: Camera,
     samples_per_pixel: u32,
     max_depth: i32,
-    should_stop: AtomicBool,
 }
 
 impl Renderer {
@@ -142,24 +134,17 @@ impl Renderer {
         scene: Scene,
         camera: Camera,
     ) -> Self {
-        let (s, r) = bounded(image_width as usize * image_height as usize);
         Renderer {
             image_width: image_width,
             image_height: image_height,
-            channel_sender: s,
-            channel_receiver: r,
             scene: scene,
             camera: camera,
             samples_per_pixel: samples_per_pixel,
             max_depth: 50,
-            should_stop: AtomicBool::new(false),
         }
     }
 
-    pub fn render_frame(&self, pool: &mut impl ParallelExecutor) {
-        println!("Start render");
-        let time_start = std::time::Instant::now();
-
+    pub fn render_frame(self, pool: &mut impl ParallelExecutor) -> impl futures::Stream<Item=Vec<PixelResult>> {
         // Generate blocks to render the image
         let blocker = ImageBlocker::new(self.image_width, self.image_height);
         let block_count_x = blocker.block_count_x as i32;
@@ -193,54 +178,9 @@ impl Renderer {
                 samples_per_pixel: self.samples_per_pixel,
                 max_depth: self.max_depth,
             }));
-        } // loop blocker
-
-        let mut ray_count = 0;
-        futures::executor::block_on(async {
-            while let Some((pixels_ray_count, pixels)) = futs.next().await {
-                if self.should_stop.load(Ordering::SeqCst) {
-                    break
-                }
-                ray_count += pixels_ray_count;
-                for pixel in pixels {
-                    self.channel_sender.send(pixel).unwrap()
-                }
-            }
-        });
-
-        let time_elapsed = time_start.elapsed();
-        let ray_count_f32 = ray_count as f32;
-        let mrays_sec = (ray_count_f32 / time_elapsed.as_secs_f32()) / 1000000.0;
-
-        println!("Stop render");
-        println!(
-            "Time: {0}ms MRays/sec {1:.3}",
-            time_elapsed.as_millis(),
-            mrays_sec
-        );
-    }
-
-    /// Returns fully rendered pixels in the channel
-    pub fn poll_results(&self) -> Option<Vec<PixelResult>> {
-        let mut results = Vec::new();
-        let mut limit = self.image_width * self.image_height;
-        if self.should_stop.load(Ordering::SeqCst) {
-            return None
         }
-        while !self.channel_receiver.is_empty() {
-            let res = self.channel_receiver.recv().unwrap();
-            results.push(res);
-            limit -= 1;
-            if limit == 0 {
-                self.stop();
-                break
-            }
-        }
-        Some(results)
-    }
 
-    pub fn stop(&self) {
-        self.should_stop.store(true, Ordering::SeqCst);
+        futs
     }
 }
 
@@ -255,10 +195,9 @@ struct Ctx {
     max_depth: i32,
 }
 
-fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, samples_per_pixel, max_depth }: Ctx) -> (u32, Vec<PixelResult>) {
+fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, samples_per_pixel, max_depth }: Ctx) -> Vec<PixelResult> {
     // Begin of thread
     let num_pixels = renderblock.width * renderblock.height;
-    let mut ray_count = 0;
     let mut rng = rand::thread_rng();
     let pixels = (0..num_pixels).into_iter().map(|index| {
         // Compute pixel location
@@ -280,8 +219,7 @@ fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, sam
             let v = v_base + rng.gen_range(0.0..v_rand);
             let ray = camera.get_ray(u, v);
             // Start the primary here from here
-            color_accum +=
-                ray_color(ray, &scene, max_depth, &mut ray_count);
+            color_accum += ray_color(ray, &scene, max_depth);
         }
         color_accum /= samples_per_pixel as f32;
 
@@ -291,6 +229,5 @@ fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, sam
             color: color_accum,
         }
     }).collect(); // for_each pixel
-    // TODO incrementally return pixels, it looks pretty cool...but how much bandwidth?
-    (ray_count, pixels)
+    pixels
 }

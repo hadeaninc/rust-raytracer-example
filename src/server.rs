@@ -5,6 +5,7 @@ use actix_web::http::header::{ContentEncoding, ContentType};
 use actix_web::middleware;
 use actix_web::web;
 use actix_web_actors::ws;
+use futures::prelude::*;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -278,7 +279,7 @@ pub fn main(addr: String) {
                     let delta_mult = (-(job.total_frames as f32) * delta_increment / 2.) + (delta_idx as f32 * delta_increment);
                     let cam = one_weekend_cam_lookat(job.width.into(), job.height.into(), lookat + (Point3::ONE * delta_mult));
                     let render_worker = render::Renderer::new(job.width.into(), job.height.into(), job.samples_per_pixel, scene.clone(), cam);
-                    let buffer_display = render_and_return(job.width.into(), job.height.into(), &render_worker, &mut pool);
+                    let buffer_display = render_and_return(job.width.into(), job.height.into(), render_worker, &mut pool);
                     println!("finished rendering a frame");
 
                     let mut png = vec![];
@@ -363,20 +364,16 @@ pub fn main(addr: String) {
 }
 
 // Boring all-in-one rendering of a frame
-fn render_and_return(width: usize, height: usize, render_worker: &render::Renderer, pool: &mut impl ParallelExecutor) -> Vec<ColorDisplay> {
-    render_worker.render_frame(pool);
+fn render_and_return(width: usize, height: usize,  render_worker: render::Renderer, pool: &mut impl ParallelExecutor) -> Vec<ColorDisplay> {
     let mut buffer_display: Vec<ColorDisplay> = vec![0; width * height];
-    loop {
-        let render_results = render_worker.poll_results();
-        match render_results {
-            Some(render_results) => {
-                for result in render_results {
-                    let index = index_from_xy(width as u32, height as u32, result.x, result.y);
-                    buffer_display[index] = color_display_from_render(result.color);
-                }
-            },
-            None => return buffer_display,
+    let process_results = render_worker.render_frame(pool).for_each(|results| {
+        for result in results {
+            let index = index_from_xy(width as u32, height as u32, result.x, result.y);
+            buffer_display[index] = color_display_from_render(result.color);
         }
-    }
+        future::ready(())
+    });
+    futures::executor::block_on(process_results);
+    buffer_display
 }
 
