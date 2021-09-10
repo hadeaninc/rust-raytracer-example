@@ -1,3 +1,4 @@
+use futures::prelude::*;
 use serde::{Serialize, Deserialize};
 use spiral::ChebyshevIterator;
 
@@ -75,14 +76,6 @@ impl Iterator for ImageBlocker {
     }
 }
 
-/// A fully rendered pixel
-#[derive(Serialize, Deserialize)]
-pub struct PixelResult {
-    pub x: u32,
-    pub y: u32,
-    pub color: Color,
-}
-
 /// Recursive ray tracing
 fn ray_color(ray: Ray, scene: &Scene, depth: i32) -> Color {
     if depth <= 0 {
@@ -144,7 +137,7 @@ impl Renderer {
         }
     }
 
-    pub fn render_frame(self, pool: &mut impl ParallelExecutor) -> impl futures::Stream<Item=Vec<PixelResult>> {
+    pub fn render_frame(self, pool: &mut impl ParallelExecutor) -> impl futures::Stream<Item=(RenderBlock, image::RgbImage)> {
         // Generate blocks to render the image
         let blocker = ImageBlocker::new(self.image_width, self.image_height);
         let block_count_x = blocker.block_count_x as i32;
@@ -169,15 +162,19 @@ impl Renderer {
         // Loop blocks in the image blocker and spawn renderblock tasks
         let mut futs = futures::stream::FuturesOrdered::new();
         for renderblock in spiral_blocks {
-            futs.push(pool.execute(render_block, Ctx {
-                renderblock,
-                image_width: self.image_width,
-                image_height: self.image_height,
-                scene: self.scene.clone(),
-                camera: self.camera.clone(),
-                samples_per_pixel: self.samples_per_pixel,
-                max_depth: self.max_depth,
-            }));
+            futs.push(
+                pool.execute(render_block, Ctx {
+                    renderblock,
+                    image_width: self.image_width,
+                    image_height: self.image_height,
+                    scene: self.scene.clone(),
+                    camera: self.camera.clone(),
+                    samples_per_pixel: self.samples_per_pixel,
+                    max_depth: self.max_depth,
+                }).map(move |image|
+                    (renderblock, image::RgbImage::from_raw(renderblock.width, renderblock.height, image).unwrap())
+                )
+            );
         }
 
         futs
@@ -195,15 +192,13 @@ struct Ctx {
     max_depth: i32,
 }
 
-fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, samples_per_pixel, max_depth }: Ctx) -> Vec<PixelResult> {
-    // Begin of thread
-    let num_pixels = renderblock.width * renderblock.height;
+fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, samples_per_pixel, max_depth }: Ctx) -> Vec<u8> {
     let mut rng = rand::thread_rng();
-    let pixels = (0..num_pixels).into_iter().map(|index| {
+    let mut img = image::RgbImage::new(renderblock.width, renderblock.height);
+    img.enumerate_pixels_mut().for_each(|(px, py, pixel)| {
         // Compute pixel location
-        let x = renderblock.x + index % renderblock.width;
-        let y =
-            renderblock.y + (index / renderblock.width) % renderblock.height;
+        let x = renderblock.x + px;
+        let y = renderblock.y + py;
 
         // Set up supersampling
         let mut color_accum = Color::ZERO;
@@ -223,11 +218,7 @@ fn render_block(Ctx { renderblock, image_width, image_height, scene, camera, sam
         }
         color_accum /= samples_per_pixel as f32;
 
-        PixelResult {
-            x: x,
-            y: y,
-            color: color_accum,
-        }
-    }).collect(); // for_each pixel
-    pixels
+        *pixel = rgb_from_render(color_accum);
+    });
+    img.into_raw()
 }

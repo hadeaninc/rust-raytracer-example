@@ -213,7 +213,7 @@ mod window {
     use crate::camera::Camera;
     use crate::parallel;
     use crate::render;
-    use crate::shared::{ColorDisplay, Point3, color_display_from_render, index_from_xy, u8_vec_from_buffer_display};
+    use crate::shared::{Point3, color_display_from_rgb, index_from_xy, u8_vec_from_buffer_display};
     use crate::{one_weekend_scene};
 
     fn one_weekend_cam(width: usize, height: usize) -> Camera {
@@ -248,7 +248,7 @@ mod window {
         let render_worker =
             render::Renderer::new(WIDTH as u32, HEIGHT as u32, SAMPLES_PER_PIXEL, scene, cam);
 
-        let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
+        let mut buffer_display = vec![0; WIDTH * HEIGHT];
 
         let mut pool = parallel::default_pool(num_cpus::get());
 
@@ -269,10 +269,10 @@ mod window {
 
             while window.is_open() && !window.is_key_down(Key::Escape) {
                 let has_changed = match rx.try_recv() {
-                    Ok(results) => {
-                        for result in results {
-                            let index = index_from_xy(WIDTH as u32, HEIGHT as u32, result.x, result.y);
-                            buffer_display[index] = color_display_from_render(result.color);
+                    Ok((renderblock, result_img)) => {
+                        for (px, py, pixel) in result_img.enumerate_pixels() {
+                            let index = index_from_xy(WIDTH as u32, HEIGHT as u32, renderblock.x + px, renderblock.y + py);
+                            buffer_display[index] = color_display_from_rgb(*pixel);
                         }
                         true
                     },

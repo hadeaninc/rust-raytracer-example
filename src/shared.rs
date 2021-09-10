@@ -46,26 +46,23 @@ pub fn u8_vec_from_buffer_display(bd: &[ColorDisplay]) -> Vec<u8> {
         .collect()
 }
 
-fn u8_vec_from_color_display(c: ColorDisplay) -> Vec<u8> {
+fn u8_vec_from_color_display(c: ColorDisplay) -> [u8; 3] {
     let b = c as u8;
     let g = (c >> 8) as u8;
     let r = (c >> 16) as u8;
-    return vec![r, g, b];
+    return [r, g, b];
 }
 
-pub fn color_display_from_u8_rgb(r: u8, g: u8, b: u8) -> ColorDisplay {
-    let (r, g, b) = (r as u32, g as u32, b as u32);
+pub fn color_display_from_rgb(rgb: image::Rgb<u8>) -> ColorDisplay {
+    let (r, g, b) = (rgb[0] as u32, rgb[1] as u32, rgb[2] as u32);
     (r << 16) | (g << 8) | b
 }
 
-pub fn color_display_from_f32_rgb(r: f32, g: f32, b: f32) -> ColorDisplay {
-    color_display_from_u8_rgb((255.0 * r) as u8, (255.0 * g) as u8, (255.0 * b) as u8)
-}
-
-pub fn color_display_from_render(c: Color) -> ColorDisplay {
+pub fn rgb_from_render(c: Color) -> image::Rgb<u8> {
     let gamma = 1.0 / 2.2;
     let col_gamma = Color::new(c.x.powf(gamma), c.y.powf(gamma), c.z.powf(gamma));
-    color_display_from_f32_rgb(col_gamma.x, col_gamma.y, col_gamma.z)
+    let v = [(255.0 * col_gamma.x) as u8, (255.0 * col_gamma.y) as u8, (255.0 * col_gamma.z) as u8];
+    image::Rgb(v)
 }
 
 pub fn degrees_to_radians(degrees: f32) -> f32 {

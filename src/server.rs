@@ -6,6 +6,7 @@ use actix_web::middleware;
 use actix_web::web;
 use actix_web_actors::ws;
 use futures::prelude::*;
+use image::GenericImage;
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::parallel::{self, ParallelExecutor};
 use crate::render;
-use crate::shared::{ColorDisplay, Point3, color_display_from_render, index_from_xy, u8_vec_from_buffer_display};
+use crate::shared::Point3;
 use crate::{one_weekend_cam_lookat, one_weekend_scene};
 
 static INDEX_HTML: &[u8] = include_bytes!("../static/index.html");
@@ -54,7 +55,7 @@ impl Default for RenderJob {
 }
 
 struct RenderFrame {
-    pixels: Vec<u8>,
+    img: image::RgbImage,
     png: Vec<u8>,
 }
 
@@ -281,15 +282,13 @@ pub fn main(addr: String) {
                     let delta_mult = (-(job.total_frames as f32) * delta_increment / 2.) + (delta_idx as f32 * delta_increment);
                     let cam = one_weekend_cam_lookat(job.width.into(), job.height.into(), lookat + (Point3::ONE * delta_mult));
                     let render_worker = render::Renderer::new(job.width.into(), job.height.into(), job.samples_per_pixel, scene.clone(), cam);
-                    let buffer_display = render_and_return(job.width.into(), job.height.into(), render_worker, &mut pool);
+                    let img = render_and_return(job.width as u32, job.height as u32, render_worker, &mut pool);
                     println!("finished rendering a frame");
 
                     let mut png = vec![];
-                    let pixels = u8_vec_from_buffer_display(&buffer_display);
-                    let imageslice = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(job.width.into(), job.height.into(), &*pixels).unwrap();
-                    let thumb = image::DynamicImage::ImageRgb8(image::imageops::thumbnail(&imageslice, THUMB_MAX_PX, THUMB_MAX_PX));
+                    let thumb = image::DynamicImage::ImageRgb8(image::imageops::thumbnail(&img, THUMB_MAX_PX, THUMB_MAX_PX));
                     thumb.write_to(&mut png, image::ImageOutputFormat::Png).unwrap();
-                    thread_state.lock().render.frames.push(RenderFrame { pixels, png });
+                    thread_state.lock().render.frames.push(RenderFrame { img, png });
                     println!("finished creating a png");
 
                 } else if !has_gif {
@@ -299,7 +298,7 @@ pub fn main(addr: String) {
                         let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
                         encoder.set_repeat(image::codecs::gif::Repeat::Infinite).unwrap();
                         for frame in s.render.frames.iter() {
-                            encoder.encode(&frame.pixels, job.width.into(), job.height.into(), image::ColorType::Rgb8).unwrap();
+                            encoder.encode(frame.img.as_raw(), job.width.into(), job.height.into(), image::ColorType::Rgb8).unwrap();
                         }
                         drop(encoder);
                         s.render.gif = Some(gif);
@@ -368,16 +367,13 @@ pub fn main(addr: String) {
 }
 
 // Boring all-in-one rendering of a frame
-fn render_and_return(width: usize, height: usize,  render_worker: render::Renderer, pool: &mut impl ParallelExecutor) -> Vec<ColorDisplay> {
-    let mut buffer_display: Vec<ColorDisplay> = vec![0; width * height];
-    let process_results = render_worker.render_frame(pool).for_each(|results| {
-        for result in results {
-            let index = index_from_xy(width as u32, height as u32, result.x, result.y);
-            buffer_display[index] = color_display_from_render(result.color);
-        }
+fn render_and_return(width: u32, height: u32, render_worker: render::Renderer, pool: &mut impl ParallelExecutor) -> image::RgbImage {
+    let mut img = image::RgbImage::new(width, height);
+    let process_results = render_worker.render_frame(pool).for_each(|(renderblock, result_img)| {
+        img.copy_from(&result_img, renderblock.x, renderblock.y).unwrap();
         future::ready(())
     });
     futures::executor::block_on(process_results);
-    buffer_display
+    img
 }
 
