@@ -217,10 +217,17 @@ mod window {
 
 #[cfg(feature = "gui")]
 mod window {
+    use futures::prelude::*;
     use minifb::{Key, Window, WindowOptions};
     use std::fs::File;
     use std::io::BufWriter;
     use std::path::Path;
+
+    use crate::camera::Camera;
+    use crate::parallel;
+    use crate::render;
+    use crate::shared::{ColorDisplay, Point3, color_display_from_render, index_from_xy, u8_vec_from_buffer_display};
+    use crate::{one_weekend_scene, write_png};
 
     fn one_weekend_cam(width: usize, height: usize) -> Camera {
         super::one_weekend_cam_lookat(width, height, Point3::new(0.0, 0.0, 0.0))
@@ -256,26 +263,34 @@ mod window {
 
         let mut buffer_display: Vec<ColorDisplay> = vec![0; WIDTH * HEIGHT];
 
+        let mut pool = parallel::default_pool(num_cpus::get());
+
         crossbeam::scope(|scope| {
-            // Start the render thread
-            scope.spawn(|_| {
-                let mut pool = parallel::default_pool(num_cpus::get());
-                render_worker.render_frame(&mut pool);
+            let (tx, rx) = crossbeam::channel::unbounded();
+
+            scope.spawn(move |_| {
+                let mut stream = render_worker.render_frame(&mut pool);
+                futures::executor::block_on(async {
+                    while let Some(results) = stream.next().await {
+                        match tx.send(results) {
+                            Ok(()) => (),
+                            Err(crossbeam::channel::SendError(_)) => break,
+                        }
+                    }
+                })
             });
 
-            // Window loop
             while window.is_open() && !window.is_key_down(Key::Escape) {
-                // Fetch rendered pixels
-                let has_changed = match render_worker.poll_results() {
-                    Some(render_results) => {
-                        let has_changed = !render_results.is_empty();
-                        for result in render_results {
+                let has_changed = match rx.try_recv() {
+                    Ok(results) => {
+                        for result in results {
                             let index = index_from_xy(WIDTH as u32, HEIGHT as u32, result.x, result.y);
                             buffer_display[index] = color_display_from_render(result.color);
-                        };
-                        has_changed
+                        }
+                        true
                     },
-                    None => false,
+                    Err(crossbeam::channel::TryRecvError::Empty) |
+                    Err(crossbeam::channel::TryRecvError::Disconnected) => false,
                 };
                 if has_changed {
                     window
@@ -285,8 +300,6 @@ mod window {
                     window.update();
                 }
             }
-
-            render_worker.stop();
         })
         .unwrap();
 

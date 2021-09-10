@@ -15,8 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use crate::parallel::{self, ParallelExecutor};
 use crate::render;
 use crate::shared::{ColorDisplay, Point3, color_display_from_render, index_from_xy, u8_vec_from_buffer_display};
-
-use super::{one_weekend_cam_lookat, one_weekend_scene, write_png};
+use crate::{one_weekend_cam_lookat, one_weekend_scene, write_png};
 
 static INDEX_HTML: &[u8] = include_bytes!("../static/index.html");
 
