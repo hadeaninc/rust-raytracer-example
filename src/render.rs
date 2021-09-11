@@ -8,6 +8,8 @@ use crate::parallel::ParallelExecutor;
 use crate::scene::Scene;
 use crate::shared::{TRACE_EPSILON, TRACE_INFINITY, Color, Ray, RayQuery, ceil_div, rgb_from_render};
 
+const BLOCK_SIZE: u32 = 32;
+
 /// Coordinates for a block to render
 #[derive(Copy, Clone)]
 #[derive(Serialize, Deserialize)]
@@ -31,8 +33,8 @@ pub struct ImageBlocker {
 
 impl ImageBlocker {
     fn new(image_width: u32, image_height: u32) -> Self {
-        let block_width = 32;
-        let block_height = 32;
+        let block_width = BLOCK_SIZE;
+        let block_height = BLOCK_SIZE;
         ImageBlocker {
             image_width: image_width,
             image_height: image_height,
