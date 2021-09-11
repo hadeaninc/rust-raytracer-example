@@ -254,7 +254,7 @@ pub fn main(addr: String) {
                             },
                         }
                     }
-                    // Block until we find a job requiring work
+                    // Block until we find a job requiring work if everything is done
                     // Careful with locking around this one, it can block forever
                     if thread_state.with(|s| s.render.frames.len() == s.render.job.total_frames) {
                         match job_rx.recv_timeout(Duration::from_millis(100)) {
@@ -369,7 +369,7 @@ pub fn main(addr: String) {
 // Boring all-in-one rendering of a frame
 fn render_and_return(width: u32, height: u32, render_worker: render::Renderer, pool: &mut impl ParallelExecutor) -> image::RgbImage {
     let mut img = image::RgbImage::new(width, height);
-    let process_results = render_worker.render_frame(pool).for_each(|(renderblock, result_img)| {
+    let process_results = render_worker.render_frame_parallel(pool).for_each(|(renderblock, result_img)| {
         img.copy_from(&result_img, renderblock.x, renderblock.y).unwrap();
         future::ready(())
     });

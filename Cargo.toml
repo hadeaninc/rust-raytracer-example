@@ -30,6 +30,8 @@ futures = { version = "0.3", features = ["executor", "thread-pool"] }
 serde = { version = "1", features = ["derive"] }
 hadean = { optional = true, path = "/home/aidanhs/.hadean/sdk/crates/hadean" }
 
+bincode = "1.3"
+
 [features]
 distributed = ["hadean"]
 gui = ["minifb"]

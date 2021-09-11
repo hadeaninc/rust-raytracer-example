@@ -1156,6 +1156,7 @@ dependencies = [
  "actix-rt",
  "actix-web",
  "actix-web-actors",
+ "bincode",
  "bvh",
  "crossbeam",
  "crossbeam-channel 0.4.4",

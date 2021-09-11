@@ -66,6 +66,10 @@ mod parallel {
     }
 }
 
+fn one_weekend_cam(width: usize, height: usize) -> Camera {
+    one_weekend_cam_lookat(width, height, Point3::new(0.0, 0.0, 0.0))
+}
+
 fn one_weekend_cam_lookat(width: usize, height: usize, lookat: Point3) -> Camera {
     let aspect_ratio = (width as f32) / (height as f32);
 
@@ -187,6 +191,67 @@ fn main() {
         let out_file = if args.len() > 2 { Some(args[2].as_str()) } else { None };
         window::main(out_file);
 
+    } else if args.len() == 2 && args[1] == "size-analyze" {
+
+        let width = 1280/4;
+        let height = 720/4;
+        let frames = 40;
+
+        let block_size = 32;
+
+        const CHANNELS: usize = 3;
+        const UNIT_BOUND: usize = 1024;
+
+        fn sizefmt(mut n: usize) -> String {
+            if n < UNIT_BOUND {
+                return format!("{}B", n)
+            }
+            n /= 1024;
+            if n < UNIT_BOUND {
+                return format!("{}KiB", n)
+            }
+            n /= 1024;
+            return format!("{}MiB", n)
+        }
+
+        println!("# IMAGE");
+        println!("Considering an image of {}px x {}px with {} frames", width, height, frames);
+        let frame_bytes = width * height * CHANNELS;
+        println!("{} for pixels for a single uncompressed frame", sizefmt(frame_bytes));
+        println!("{} for all {} frames", sizefmt(frame_bytes * frames), frames);
+        println!("");
+
+        println!("# BLOCKS");
+        let approx_num_blocks_per_frame = (width * height) / (block_size * block_size);
+        let approx_block_overhead_per_frame = approx_num_blocks_per_frame * std::mem::size_of::<render::RenderBlock>();
+        let approx_block_overhead_total = approx_block_overhead_per_frame * frames;
+        println!("Processing with blocks adds approx {} per frame", sizefmt(approx_block_overhead_per_frame));
+        println!("Processing with blocks adds {} for all {} frames",  sizefmt(approx_block_overhead_total), frames);
+        println!("");
+
+        println!("# JOB");
+        let scene = one_weekend_scene();
+        let cam = one_weekend_cam(width, height);
+        let scene_bytes = bincode::serialized_size(&scene).unwrap() as usize;
+        let cam_bytes = bincode::serialized_size(&cam).unwrap() as usize;
+        let job_bytes = scene_bytes + cam_bytes;
+        let pct_scene = 100. * scene_bytes as f32 / (scene_bytes + cam_bytes) as f32;
+        println!("scene data is {} ({:.2}%) and cam data is {} ({:.2}%)", sizefmt(scene_bytes), pct_scene, sizefmt(cam_bytes), 100. - pct_scene);
+        println!("sending job data per frame costs {} for all {} frames", sizefmt(job_bytes * frames), frames);
+        println!("sending job data per block costs {} for all {} frames", sizefmt(job_bytes * frames * approx_num_blocks_per_frame), frames);
+        println!("");
+
+        println!("# PIXELRESULT (old way of transferring data)");
+        struct PixelResult {
+            _x: u32,
+            _y: u32,
+            _color: Color,
+        }
+        let pixelresult_frame_bytes = width * height * std::mem::size_of::<PixelResult>();
+        println!("{} for a frame's worth of PixelResults", sizefmt(pixelresult_frame_bytes));
+        println!("{} for all {} frames", sizefmt(pixelresult_frame_bytes * frames), frames);
+        println!("");
+
     } else {
 
         println!("invalid command: {:?}", args);
@@ -210,15 +275,10 @@ mod window {
     use futures::prelude::*;
     use minifb::{Key, Window, WindowOptions};
 
-    use crate::camera::Camera;
     use crate::parallel;
     use crate::render;
-    use crate::shared::{Point3, color_display_from_rgb, index_from_xy, u8_vec_from_buffer_display};
-    use crate::{one_weekend_scene};
-
-    fn one_weekend_cam(width: usize, height: usize) -> Camera {
-        super::one_weekend_cam_lookat(width, height, Point3::new(0.0, 0.0, 0.0))
-    }
+    use crate::shared::{color_display_from_rgb, index_from_xy, u8_vec_from_buffer_display};
+    use crate::{one_weekend_cam, one_weekend_scene};
 
     pub fn main(out_file: Option<&str>) {
         const WIDTH: usize = 1280;
@@ -255,8 +315,9 @@ mod window {
         crossbeam::scope(|scope| {
             let (tx, rx) = crossbeam::channel::unbounded();
 
+            // TODO: ideally this shouldn't be a thread
             scope.spawn(move |_| {
-                let mut stream = render_worker.render_frame(&mut pool);
+                let mut stream = render_worker.render_frame_parallel(&mut pool);
                 futures::executor::block_on(async {
                     while let Some(results) = stream.next().await {
                         match tx.send(results) {

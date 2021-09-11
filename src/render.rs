@@ -140,7 +140,7 @@ impl Renderer {
         }
     }
 
-    pub fn render_frame(self, pool: &mut impl ParallelExecutor) -> impl futures::Stream<Item=(RenderBlock, image::RgbImage)> {
+    pub fn render_frame_parallel(self, pool: &mut impl ParallelExecutor) -> impl Stream<Item=(RenderBlock, image::RgbImage)> {
         // Generate blocks to render the image
         let blocker = ImageBlocker::new(self.image_width, self.image_height);
         let block_count_x = blocker.block_count_x as i32;
