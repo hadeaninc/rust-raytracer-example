@@ -1095,7 +1095,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hadean-tracer"
+name = "hadean-raytracer"
 version = "0.1.0"
 dependencies = [
  "actix",
