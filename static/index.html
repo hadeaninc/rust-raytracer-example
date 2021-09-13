@@ -100,9 +100,15 @@
         a.readAsDataURL(blob);
     }
 
+    function numRenderedFrames(frames) {
+        return frames.reduce((count, f) => count + (f === null ? 0 : 1), 0);
+    }
+
     function handleWSMessage(msg) {
         if (typeof msg.data === 'string') {
-            // Strings on the websocket are JSON-formatted config messages that reset rendering
+            // Strings on the websocket are JSON-formatted config messages of one of the following variants
+            //
+            // VARIANT 1: resets rendering:
             // {
             //   "job": { "field1": <value1>, ... },
             //   "job_fields": [
@@ -114,41 +120,66 @@
             //   ],
             // }
             // NOTE: must contain at least 'width', 'height' and 'total_frames'
+            //
+            // VARIANT 2: indicates the next binary message will be frame <index>
+            // {
+            //   "frame": <index>,
+            // }
+            //
+            // VARIANT 3: indicates the next binary message will be the gif
+            // {
+            //   "gif": null,
+            // }
 
-            let config = JSON.parse(msg.data);
-            let job_entry = {};
-            config.job_fields.forEach(([field, _type]) => {
-                job_entry[field] = this.state.job_entry[field] || '';
-            });
-            this.setState({
-                config,
-                nextFrame: 0,
-                frames: Array(config.job.total_frames).fill(null),
-                gif: null,
-                job_entry,
-            });
+            let metaMsg = JSON.parse(msg.data);
+            if (metaMsg.hasOwnProperty('job')) {
+                let job_entry = {};
+                metaMsg.job_fields.forEach(([field, _type]) => {
+                    job_entry[field] = this.state.job_entry[field] || '';
+                });
+                this.setState({
+                    config: metaMsg,
+                    nextBinary: null,
+                    frames: Array(metaMsg.job.total_frames).fill(null),
+                    gif: null,
+                    job_entry,
+                });
+            } else if (metaMsg.hasOwnProperty('frame')) {
+                this.setState({
+                    nextBinary: { type: 'frame', index: metaMsg['frame'] },
+                });
+            } else if (metaMsg.hasOwnProperty('gif')) {
+                this.setState({
+                    nextBinary: { type: 'gif' },
+                });
+            } else {
+                console.log('unknown meta msg:', metaMsg);
+            }
 
         } else if (msg.data instanceof Blob) {
             // Blobs are either a rendered frame or a gif
 
-            if (this.state.nextFrame === this.state.config.job.total_frames) {
-                // If we've already got all frames it must be the gif
-                blobToDataURL(msg.data, (gif) => this.setState({ gif }));
-
-            } else {
-                // Otherwise it's a frame
-
-                // Reserve a slot for this frame
-                let idx = this.state.nextFrame;
-                this.setState({ nextFrame: this.state.nextFrame + 1 });
-
-                // Convert to a data url and actually add to the slot when it's ready
+            if (typeof this.state.nextBinary !== 'object') {
+                console.log('not yet expecting a binary message');
+            } else if (this.state.nextBinary.type === 'frame') {
+                let idx = this.state.nextBinary.index;
+                // Convert to a data url and add to the slot when it's ready
                 blobToDataURL(msg.data, (frame) => {
                     let frames = this.state.frames.slice();
                     frames[idx] = frame;
                     this.setState({ frames });
                 });
+            } else if (this.state.nextBinary.type === 'gif') {
+                let renderedFrames = numRenderedFrames(this.state.frames);
+                if (renderedFrames !== this.state.config.job.total_frames) {
+                    console.log('got a gif before we expected', renderedFrames, this.state.config.job.total_frames);
+                }
+                // If we've already got all frames it must be the gif
+                blobToDataURL(msg.data, (gif) => this.setState({ gif }));
+            } else {
+                console.log('unknown binary message type');
             }
+            this.setState({ nextBinary: null });
 
         } else {
             console.log('unknown websocket msg', msg);
@@ -161,7 +192,7 @@
             ws.onmessage = handleWSMessage.bind(this);
             this.state = {
                 config: { job: { 'width': 1, 'height': 1, 'total_frames': 0 }, job_fields: [] },
-                nextFrame: 0,
+                nextBinary: null,
                 frames: [],
                 gif: null,
                 job_entry: {},
@@ -198,7 +229,7 @@
         }
 
         render() {
-            let { config, nextFrame, frames, gif, job_entry } = this.state;
+            let { config, frames, gif, job_entry } = this.state;
 
             let params_display = <div>{config.job_fields.map(([field, type]) => {
                 let inner;
@@ -233,7 +264,7 @@
                         <h1>Hadean Renderer</h1>
                         {params_display}
                         <button onClick={this.handleClick.bind(this)}>Re-render</button>
-                        <div>Rendered {nextFrame} of {config.job.total_frames} frames for {JSON.stringify(config.job)}</div>
+                        <div>Rendered {numRenderedFrames(frames)} of {config.job.total_frames} frames for {JSON.stringify(config.job)}</div>
                     </div>
                     <div id="main"><img width={config.job.width} height={config.job.height} src={gif === null ? BLACK_PIXEL : gif}></img></div>
                     <div id="thumbs">{frames_display}</div>

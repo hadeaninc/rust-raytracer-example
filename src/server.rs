@@ -91,7 +91,9 @@ impl Default for RenderStatus {
 #[derive(Debug)]
 enum ClientState {
     NeedsConfig,
+    NeedsFrameMeta(usize),
     NeedsFrame(usize),
+    NeedsGifMeta,
     NeedsGif,
     Complete,
 }
@@ -121,7 +123,13 @@ struct MyWs {
 }
 
 enum MyMsg {
-    Frame(Vec<u8>),
+    Meta(MetaMsg),
+    Binary(Vec<u8>),
+}
+
+enum MetaMsg {
+    Frame { index: usize },
+    Gif,
     Reset(RenderJob),
 }
 
@@ -134,11 +142,19 @@ impl Handler<MyMsg> for MyWs {
 
     fn handle(&mut self, msg: MyMsg, ctx: &mut Self::Context) {
         match msg {
-            MyMsg::Frame(d) => ctx.binary(d),
-            MyMsg::Reset(job) =>
+            MyMsg::Binary(d) => ctx.binary(d),
+            MyMsg::Meta(MetaMsg::Reset(job)) =>
                 ctx.text(serde_json::json!({
                     "job": job,
                     "job_fields": render_job_fields(),
+                }).to_string()),
+            MyMsg::Meta(MetaMsg::Frame { index }) =>
+                ctx.text(serde_json::json!({
+                    "frame": index,
+                }).to_string()),
+            MyMsg::Meta(MetaMsg::Gif) =>
+                ctx.text(serde_json::json!({
+                    "gif": null,
                 }).to_string()),
         }
     }
@@ -430,24 +446,27 @@ fn update_client(addr: &Addr<MyWs>, cs: &mut ClientState, render: &RenderStatus)
     loop {
         let (msg, next_cs) = match *cs {
             // Send the config
-            ClientState::NeedsConfig => (MyMsg::Reset(render.job.clone()), ClientState::NeedsFrame(0)),
+            ClientState::NeedsConfig => (MyMsg::Meta(MetaMsg::Reset(render.job.clone())), ClientState::NeedsFrameMeta(0)),
             // Wants more frames, but the frames are finished - move onto the gif
-            ClientState::NeedsFrame(i) if i == render.job.total_frames => {
-                *cs = ClientState::NeedsGif;
+            ClientState::NeedsFrameMeta(i) if i == render.job.total_frames => {
+                *cs = ClientState::NeedsGifMeta;
                 continue
             },
             // Wants more frames, but nothing to send yet
-            ClientState::NeedsFrame(i) if i == render.frames.len() => break,
+            ClientState::NeedsFrameMeta(i) if i == render.frames.len() => break,
             // Send a frame
-            ClientState::NeedsFrame(i) => (MyMsg::Frame(render.frames[i].1.png.clone()), ClientState::NeedsFrame(i+1)),
+            ClientState::NeedsFrame(i) => (MyMsg::Binary(render.frames[i].1.png.clone()), ClientState::NeedsFrameMeta(i+1)),
             ClientState::NeedsGif => {
                 match render.gif.as_ref() {
                     // Send the gif
-                    Some(gif) => (MyMsg::Frame(gif.clone()), ClientState::Complete),
+                    Some(gif) => (MyMsg::Binary(gif.clone()), ClientState::Complete),
                     // No gif available yet
                     None => break,
                 }
             },
+            // If needs some meta, send it and move to the actual data
+            ClientState::NeedsFrameMeta(i) => (MyMsg::Meta(MetaMsg::Frame { index: render.frames[i].0 }), ClientState::NeedsFrame(i)),
+            ClientState::NeedsGifMeta => (MyMsg::Meta(MetaMsg::Gif), ClientState::NeedsGif),
             // Client is up to date
             ClientState::Complete => break,
         };
