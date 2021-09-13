@@ -5,14 +5,9 @@ use rand::Rng;
 
 pub type Point3 = glam::Vec3;
 pub type Color = glam::Vec3;
-pub type ColorDisplay = u32;
 
 pub const TRACE_EPSILON: f32 = 0.001;
 pub const TRACE_INFINITY: f32 = f32::MAX;
-
-pub fn index_from_xy(image_width: u32, _image_height: u32, x: u32, y: u32) -> usize {
-    (y * image_width + x) as usize
-}
 
 /// A minimal ray
 #[derive(Copy, Clone)]
@@ -37,25 +32,6 @@ pub struct RayQuery {
     pub ray: Ray,
     pub t_min: f32,
     pub t_max: f32,
-}
-
-pub fn u8_vec_from_buffer_display(bd: &[ColorDisplay]) -> Vec<u8> {
-    bd
-        .into_iter()
-        .flat_map(|x| u8_vec_from_color_display(*x))
-        .collect()
-}
-
-fn u8_vec_from_color_display(c: ColorDisplay) -> [u8; 3] {
-    let b = c as u8;
-    let g = (c >> 8) as u8;
-    let r = (c >> 16) as u8;
-    return [r, g, b];
-}
-
-pub fn color_display_from_rgb(rgb: image::Rgb<u8>) -> ColorDisplay {
-    let (r, g, b) = (rgb[0] as u32, rgb[1] as u32, rgb[2] as u32);
-    (r << 16) | (g << 8) | b
 }
 
 pub fn rgb_from_render(c: Color) -> image::Rgb<u8> {

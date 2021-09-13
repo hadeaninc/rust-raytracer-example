@@ -359,7 +359,7 @@ fn reset_job<'a, 'b>(job: RenderJob, scene: &Scene, state: &mut MyServerDataInne
             scope.spawn(move |_| {
                 for idx in 0..job.total_frames {
                     let render_worker = make_renderer(idx, scene.clone(), job.clone());
-                    let img = render_frame_parallel(render_worker, pool);
+                    let img = futures::executor::block_on(render_frame_parallel(render_worker, pool));
                     println!("finished rendering a frame");
                     match frame_tx.send((idx, img.width(), img.height(), img.into_raw())) {
                         Ok(()) => (),
@@ -413,14 +413,12 @@ fn render_frame(render_worker: render::Renderer, pool: &impl ParallelExecutor) -
     render_worker.render_frame_single(pool)
 }
 
-fn render_frame_parallel(render_worker: render::Renderer, pool: &impl ParallelExecutor) -> image::RgbImage {
-    let mut img = image::RgbImage::new(render_worker.width(), render_worker.height());
-    let process_results = render_worker.render_frame_parallel(pool).for_each(|(renderblock, result_img)| {
+fn render_frame_parallel(render_worker: render::Renderer, pool: &impl ParallelExecutor) -> impl Future<Output=image::RgbImage> {
+    let img = image::RgbImage::new(render_worker.width(), render_worker.height());
+    render_worker.render_frame_parallel(pool).fold(img, |mut img, (renderblock, result_img)| {
         img.copy_from(&result_img, renderblock.x, renderblock.y).unwrap();
-        future::ready(())
-    });
-    futures::executor::block_on(process_results);
-    img
+        future::ready(img)
+    })
 }
 
 fn render_gif(state: &mut MyServerDataInner) {

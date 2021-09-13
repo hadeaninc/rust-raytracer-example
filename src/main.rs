@@ -277,8 +277,32 @@ mod window {
 
     use crate::parallel;
     use crate::render;
-    use crate::shared::{color_display_from_rgb, index_from_xy, u8_vec_from_buffer_display};
     use crate::{one_weekend_cam, one_weekend_scene};
+
+    type ColorDisplay = u32;
+
+    fn u8_vec_from_buffer_display(bd: &[ColorDisplay]) -> Vec<u8> {
+        bd
+            .into_iter()
+            .flat_map(|x| u8_vec_from_color_display(*x))
+            .collect()
+    }
+
+    fn u8_vec_from_color_display(c: ColorDisplay) -> [u8; 3] {
+        let b = c as u8;
+        let g = (c >> 8) as u8;
+        let r = (c >> 16) as u8;
+        return [r, g, b];
+    }
+
+    fn color_display_from_rgb(rgb: image::Rgb<u8>) -> ColorDisplay {
+        let (r, g, b) = (rgb[0] as u32, rgb[1] as u32, rgb[2] as u32);
+        (r << 16) | (g << 8) | b
+    }
+
+    fn index_from_xy(image_width: u32, _image_height: u32, x: u32, y: u32) -> usize {
+        (y * image_width + x) as usize
+    }
 
     pub fn main(out_file: Option<&str>) {
         const WIDTH: usize = 1280;
