@@ -29,18 +29,18 @@ mod parallel {
 
     // TODO: I think we want ATCs here to be able to use Future as an associated type and then use it
     // in the return type of execute
-    pub trait ParallelExecutor {
+    pub trait ParallelExecutor: Send + Sync {
         fn execute<
             T: Serialize + DeserializeOwned + Send + Unpin + 'static,
             R: Serialize + DeserializeOwned + Send + Unpin + 'static,
-        >(&mut self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>>;
+        >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>>;
     }
 
     impl ParallelExecutor for ThreadPool {
         fn execute<
             T: Serialize + DeserializeOwned + Send + Unpin + 'static,
             R: Serialize + DeserializeOwned + Send + Unpin + 'static,
-        >(&mut self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
+        >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
             Box::pin(self.spawn_with_handle(futures::future::lazy(move |_| f(ctx))).unwrap())
         }
     }
@@ -51,7 +51,7 @@ mod parallel {
             T: Serialize + DeserializeOwned + Send + Unpin + 'static,
             R: Serialize + DeserializeOwned + Send + Unpin + 'static,
         // TODO: if I can make this a shared ref then make the trait shared ref too
-        >(&mut self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
+        >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
             Box::pin(HadeanPool::execute(self, f, ctx))
         }
     }

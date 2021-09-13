@@ -105,7 +105,13 @@
             // Strings on the websocket are JSON-formatted config messages that reset rendering
             // {
             //   "job": { "field1": <value1>, ... },
-            //   "job_fields": [ ["field1", "string" | "integer" | "float"], ... },
+            //   "job_fields": [
+            //     [
+            //       "field1",
+            //       "string" | "integer" | "float" | [ "stringoption1", "stringoption2", ... ]
+            //     ],
+            //     ...
+            //   ],
             // }
             // NOTE: must contain at least 'width', 'height' and 'total_frames'
 
@@ -181,8 +187,10 @@
                     value = parseInt(strval, 10);
                 } else if (type == 'float') {
                     value = parseFloat(strval);
+                } else if (type instanceof Array) {
+                    value = strval;
                 } else {
-                    console.log('unknown type', type, 'for field', field);
+                    console.log('unknown type', type, 'for submitting field', field);
                 }
                 job_entry[field] = value;
             })
@@ -192,9 +200,23 @@
         render() {
             let { config, nextFrame, frames, gif, job_entry } = this.state;
 
-            let params_display = <div>{config.job_fields.map(([field, _type], i) =>
-                <div key={field}>{field}: <input onChange={this.handleJobEntryChange(field)} value={job_entry[field]}></input></div>
-            )}</div>;
+            let params_display = <div>{config.job_fields.map(([field, type]) => {
+                let inner;
+                if (type == 'string' || type == 'integer' || type == 'float') {
+                    inner = <input onChange={this.handleJobEntryChange(field)} value={job_entry[field]}></input>;
+                } else if (type instanceof Array) {
+                    inner = type.map((option, oi) => <div key={option}>
+                        <input type="radio" id={field+'-'+option} name={field} value={option}
+                            onChange={this.handleJobEntryChange(field)}
+                            checked={job_entry[field] === option} />
+                        <label htmlFor={field+'-'+option}>{option}</label>
+                    </div>);
+                } else {
+                    console.log('unknown type', type, 'for rendering field', field);
+                    inner = <p>{'unkown field type for field ' + field}</p>;
+                }
+                return <div key={field}>{field}: {inner}</div>;
+            })}</div>;
 
             let max_dimension = Math.max(config.job.width, config.job.height);
             let scale_factor = THUMB_MAX_PX_DIMENSION / max_dimension;

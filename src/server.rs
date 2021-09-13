@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::parallel::{self, ParallelExecutor};
 use crate::render;
+use crate::scene::Scene;
 use crate::shared::Point3;
 use crate::{one_weekend_cam_lookat, one_weekend_scene};
 
@@ -32,6 +33,16 @@ struct RenderJob {
     samples_per_pixel: u32,
     width: u16,
     height: u16,
+    parallel: ParallelType,
+}
+
+#[derive(Clone)]
+#[derive(Serialize, Deserialize)]
+enum ParallelType {
+    #[serde(rename = "per-block")]
+    PerBlock,
+    #[serde(rename = "per-frame")]
+    PerFrame,
 }
 
 fn render_job_fields() -> serde_json::Value {
@@ -40,6 +51,7 @@ fn render_job_fields() -> serde_json::Value {
         ["samples_per_pixel", "integer"],
         ["width", "integer"],
         ["height", "integer"],
+        ["parallel", ["per-block", "per-frame"]],
     ])
 }
 
@@ -50,6 +62,7 @@ impl Default for RenderJob {
             samples_per_pixel: 128/4,
             width: 1280/4,
             height: 720/4,
+            parallel: ParallelType::PerFrame,
         }
     }
 }
@@ -61,7 +74,7 @@ struct RenderFrame {
 
 struct RenderStatus {
     job: RenderJob,
-    frames: Vec<RenderFrame>,
+    frames: Vec<(usize, RenderFrame)>,
     gif: Option<Vec<u8>>,
 }
 
@@ -192,14 +205,6 @@ async fn index() -> HttpResponse {
     HttpResponse::Ok().set(ContentType::html()).encoding(ContentEncoding::Gzip).body(INDEX_HTML)
 }
 
-fn reset_job(job: RenderJob, state: &mut MyServerDataInner) {
-    state.render = RenderStatus { job, frames: vec![], gif: None };
-    // Reset clients to receive the new job config
-    for (_, cs) in state.clients.iter_mut() {
-        *cs = ClientState::NeedsConfig
-    }
-}
-
 pub fn main(addr: String) {
     let (job_tx, job_rx) = crossbeam::channel::unbounded();
     job_tx.send(Default::default()).unwrap(); // Reset to a valid job
@@ -226,129 +231,92 @@ pub fn main(addr: String) {
     };
 
     let thread_state = state.clone();
-    let ref should_stop = Arc::new(AtomicBool::new(false));
+    let ref should_stop_bool = AtomicBool::new(false);
+    let should_stop = || should_stop_bool.load(Ordering::SeqCst);
+    let set_stop = || should_stop_bool.store(true, Ordering::SeqCst);
+    let pool = parallel::default_pool(num_cpus::get());
+    let pool = &pool;
     crossbeam::scope(move |scope| {
-        scope.spawn(move |_| {
-            let mut pool = parallel::default_pool(num_cpus::get());
+        scope.spawn(move |scope| {
 
             let mut scene = one_weekend_scene();
             scene.build_bvh();
-            let lookat = Point3::ZERO;
+
+            let mut frame_rx = None;
+            let never = crossbeam::channel::never();
 
             loop {
-                if should_stop.load(Ordering::SeqCst) {
+                if should_stop() {
                     println!("stopping rendering");
                     return
                 }
 
-                {
-                    // Drain any incoming jobs
-                    loop {
-                        let mut state = thread_state.lock();
-                        match job_rx.try_recv() {
-                            Ok(job) => reset_job(job, &mut state),
-                            Err(crossbeam::channel::TryRecvError::Empty) => break,
-                            Err(crossbeam::channel::TryRecvError::Disconnected) => {
-                                println!("ERROR channel for receiving jobs closed");
-                                return
-                            },
-                        }
-                    }
-                    // Block until we find a job requiring work if everything is done
-                    // Careful with locking around this one, it can block forever
-                    if thread_state.with(|s| s.render.frames.len() == s.render.job.total_frames) {
-                        match job_rx.recv_timeout(Duration::from_millis(100)) {
-                            Ok(job) => reset_job(job, &mut thread_state.lock()),
-                            Err(crossbeam::channel::RecvTimeoutError::Timeout) => (),
-                            Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
-                                println!("ERROR channel for receiving jobs closed");
-                                return
-                            },
-                        }
-                        if should_stop.load(Ordering::SeqCst) {
-                            println!("stopping rendering");
+                // Drain any incoming jobs
+                loop {
+                    match job_rx.try_recv() {
+                        Ok(job) => {
+                            frame_rx = Some(reset_job(job, &scene, &mut thread_state.lock(), scope, pool));
+                        },
+                        Err(crossbeam::channel::TryRecvError::Empty) => break,
+                        Err(crossbeam::channel::TryRecvError::Disconnected) => {
+                            println!("ERROR channel for receiving jobs closed");
                             return
-                        }
+                        },
                     }
                 }
 
-                let (delta_idx, job, has_gif) = thread_state.with(|s| (
-                    s.render.frames.len(), s.render.job.clone(), s.render.gif.is_some()
-                ));
-
-                if delta_idx != job.total_frames {
-                    // Process next frame of current job
-                    let delta_increment = PAN_RANGE / job.total_frames as f32;
-                    let delta_mult = (-(job.total_frames as f32) * delta_increment / 2.) + (delta_idx as f32 * delta_increment);
-                    let cam = one_weekend_cam_lookat(job.width.into(), job.height.into(), lookat + (Point3::ONE * delta_mult));
-                    let render_worker = render::Renderer::new(job.width.into(), job.height.into(), job.samples_per_pixel, scene.clone(), cam);
-                    let img = render_and_return(job.width as u32, job.height as u32, render_worker, &mut pool);
-                    println!("finished rendering a frame");
-
-                    let mut png = vec![];
-                    let thumb = image::DynamicImage::ImageRgb8(image::imageops::thumbnail(&img, THUMB_MAX_PX, THUMB_MAX_PX));
-                    thumb.write_to(&mut png, image::ImageOutputFormat::Png).unwrap();
-                    thread_state.lock().render.frames.push(RenderFrame { img, png });
-                    println!("finished creating a png");
-
-                } else if !has_gif {
-                    // We've finished all frames, create the gif
-                    thread_state.with(|s| {
-                        let mut gif = vec![];
-                        let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
-                        encoder.set_repeat(image::codecs::gif::Repeat::Infinite).unwrap();
-                        for frame in s.render.frames.iter() {
-                            encoder.encode(frame.img.as_raw(), job.width.into(), job.height.into(), image::ColorType::Rgb8).unwrap();
+                crossbeam::channel::select! {
+                    // New job arrived, attend to it
+                    recv(job_rx) -> msg => {
+                        match msg {
+                            Ok(job) => {
+                                frame_rx = Some(reset_job(job, &scene, &mut thread_state.lock(), scope, pool));
+                            },
+                            Err(crossbeam::channel::RecvError) => {
+                                println!("ERROR channel for receiving jobs closed");
+                                return
+                            },
                         }
-                        drop(encoder);
-                        s.render.gif = Some(gif);
-                        println!("finished creating a gif");
-                    })
+                    },
+                    // New frame arrived, process it
+                    recv(frame_rx.as_ref().unwrap_or(&never)) -> msg => {
+                        match msg {
+                            Ok((idx, w, h, raw)) => {
+                                let img = image::RgbImage::from_raw(w, h, raw).unwrap();
+
+                                let mut png = vec![];
+                                let thumb = image::DynamicImage::ImageRgb8(image::imageops::thumbnail(&img, THUMB_MAX_PX, THUMB_MAX_PX));
+                                thumb.write_to(&mut png, image::ImageOutputFormat::Png).unwrap();
+                                println!("finished creating a png");
+
+                                thread_state.lock().render.frames.push((idx, RenderFrame { img, png }));
+                            },
+                            Err(crossbeam::channel::RecvError) => {
+                                println!("channel for receiving frames closed");
+                                frame_rx = None
+                            },
+                        }
+                    }
+                    // Timeout to attend to existing clients
+                    default(Duration::from_millis(100)) => (),
                 }
 
                 // Update all connected clients
-                thread_state.with(|state| {
-                    for (addr, cs) in state.clients.iter_mut() {
-                        loop {
-                            let (msg, next_cs) = match *cs {
-                                // Send the config
-                                ClientState::NeedsConfig => (MyMsg::Reset(state.render.job.clone()), ClientState::NeedsFrame(0)),
-                                // Wants more frames, but the frames are finished - move onto the gif
-                                ClientState::NeedsFrame(i) if i == state.render.job.total_frames => {
-                                    *cs = ClientState::NeedsGif;
-                                    continue
-                                },
-                                // Wants more frames, but nothing to send yet
-                                ClientState::NeedsFrame(i) if i == state.render.frames.len() => break,
-                                // Send a frame
-                                ClientState::NeedsFrame(i) => (MyMsg::Frame(state.render.frames[i].png.clone()), ClientState::NeedsFrame(i+1)),
-                                ClientState::NeedsGif => {
-                                    match state.render.gif.as_ref() {
-                                        // Send the gif
-                                        Some(gif) => (MyMsg::Frame(gif.clone()), ClientState::Complete),
-                                        // No gif available yet
-                                        None => break,
-                                    }
-                                },
-                                // Client is up to date
-                                ClientState::Complete => break,
-                            };
-                            // If the send was sccessful, increment the progress for this client
-                            match addr.try_send(msg) {
-                                Ok(()) => *cs = next_cs,
-                                Err(actix::prelude::SendError::Full(_)) => {
-                                    println!("failed to send to full mailbox");
-                                    break
-                                },
-                                Err(actix::prelude::SendError::Closed(_)) => {
-                                    // TODO: unregister?
-                                    println!("ERROR failed to send to closed mailbox");
-                                    break
-                                },
-                            }
-                        }
-                    }
-                })
+                thread_state.with(update_clients);
+
+                let needs_gif = thread_state.with(|s| (
+                    s.render.frames.len() == s.render.job.total_frames && s.render.gif.is_none()
+                ));
+
+                // TODO: move this to a different thread. For now, it's below update_clients
+                // so that the last frame that comes in gets sent out before we block on creating
+                // the gif. Once it's on a different thread, move this back above update_clients
+                if needs_gif {
+                    // We've finished all frames, create the gif
+                    thread_state.with(render_gif);
+                    println!("finished creating a gif");
+                }
+
             }
         });
 
@@ -362,13 +330,75 @@ pub fn main(addr: String) {
         }).unwrap();
         println!("server shut down");
 
-        should_stop.store(true, Ordering::SeqCst);
+        set_stop();
     }).unwrap();
 }
 
-// Boring all-in-one rendering of a frame
-fn render_and_return(width: u32, height: u32, render_worker: render::Renderer, pool: &mut impl ParallelExecutor) -> image::RgbImage {
-    let mut img = image::RgbImage::new(width, height);
+fn reset_job<'a, 'b>(job: RenderJob, scene: &Scene, state: &mut MyServerDataInner, scope: &crossbeam::thread::Scope<'a>, pool: &'a impl ParallelExecutor) -> crossbeam::channel::Receiver<(usize, u32, u32, Vec<u8>)> {
+    let (frame_tx, frame_rx) = crossbeam::channel::unbounded();
+    let scene = scene.clone();
+    match job.parallel {
+        ParallelType::PerBlock => {
+            let job = job.clone();
+            scope.spawn(move |_| {
+                for idx in 0..job.total_frames {
+                    let render_worker = make_renderer(idx, scene.clone(), job.clone());
+                    let img = render_frame_parallel(render_worker, pool);
+                    println!("finished rendering a frame");
+                    match frame_tx.send((idx, img.width(), img.height(), img.into_raw())) {
+                        Ok(()) => (),
+                        Err(crossbeam::channel::SendError(_)) => {
+                            println!("terminating a processing thread as frame channel has closed");
+                            return
+                        },
+                    }
+                }
+            });
+        },
+        ParallelType::PerFrame => {
+            let job = job.clone();
+            scope.spawn(move |_| {
+                let mut futs: futures::stream::FuturesUnordered<_> = (0..job.total_frames)
+                    .map(|idx| {
+                        let render_worker = make_renderer(idx, scene.clone(), job.clone());
+                        render_frame(render_worker, pool).map(move |img| (idx, img))
+                    })
+                    .collect();
+                futures::executor::block_on(async {
+                    while let Some((idx, img)) = futs.next().await {
+                        match frame_tx.send((idx, img.width(), img.height(), img.into_raw())) {
+                            Ok(()) => (),
+                            Err(crossbeam::channel::SendError(_)) => {
+                                println!("terminating a processing thread as frame channel has closed");
+                                return
+                            },
+                        }
+                    }
+                });
+            });
+        },
+    }
+    state.render = RenderStatus { job, frames: vec![], gif: None };
+    // Reset clients to receive the new job config
+    for (_, cs) in state.clients.iter_mut() {
+        *cs = ClientState::NeedsConfig
+    }
+    frame_rx
+}
+
+fn make_renderer(idx: usize, scene: Scene, job: RenderJob) -> render::Renderer {
+    let delta_increment = PAN_RANGE / job.total_frames as f32;
+    let delta_mult = (-(job.total_frames as f32) * delta_increment / 2.) + (idx as f32 * delta_increment);
+    let cam = one_weekend_cam_lookat(job.width.into(), job.height.into(), Point3::ZERO + (Point3::ONE * delta_mult));
+    render::Renderer::new(job.width.into(), job.height.into(), job.samples_per_pixel, scene, cam)
+}
+
+fn render_frame(render_worker: render::Renderer, pool: &impl ParallelExecutor) -> impl Future<Output=image::RgbImage> {
+    render_worker.render_frame_single(pool)
+}
+
+fn render_frame_parallel(render_worker: render::Renderer, pool: &impl ParallelExecutor) -> image::RgbImage {
+    let mut img = image::RgbImage::new(render_worker.width(), render_worker.height());
     let process_results = render_worker.render_frame_parallel(pool).for_each(|(renderblock, result_img)| {
         img.copy_from(&result_img, renderblock.x, renderblock.y).unwrap();
         future::ready(())
@@ -377,3 +407,62 @@ fn render_and_return(width: u32, height: u32, render_worker: render::Renderer, p
     img
 }
 
+fn render_gif(state: &mut MyServerDataInner) {
+    let mut gif = vec![];
+    let mut encoder = image::codecs::gif::GifEncoder::new(&mut gif);
+    encoder.set_repeat(image::codecs::gif::Repeat::Infinite).unwrap();
+    let mut raws: Vec<_> = state.render.frames.iter().map(|(idx, frame)| (idx, frame.img.as_raw())).collect();
+    raws.sort_by_key(|(idx, _)| *idx);
+    for (_, img_raw) in raws {
+        encoder.encode(img_raw, state.render.job.width.into(), state.render.job.height.into(), image::ColorType::Rgb8).unwrap();
+    }
+    drop(encoder);
+    state.render.gif = Some(gif);
+}
+
+fn update_clients(state: &mut MyServerDataInner) {
+    for (addr, cs) in state.clients.iter_mut() {
+        update_client(addr, cs, &state.render);
+    }
+}
+
+fn update_client(addr: &Addr<MyWs>, cs: &mut ClientState, render: &RenderStatus) {
+    loop {
+        let (msg, next_cs) = match *cs {
+            // Send the config
+            ClientState::NeedsConfig => (MyMsg::Reset(render.job.clone()), ClientState::NeedsFrame(0)),
+            // Wants more frames, but the frames are finished - move onto the gif
+            ClientState::NeedsFrame(i) if i == render.job.total_frames => {
+                *cs = ClientState::NeedsGif;
+                continue
+            },
+            // Wants more frames, but nothing to send yet
+            ClientState::NeedsFrame(i) if i == render.frames.len() => break,
+            // Send a frame
+            ClientState::NeedsFrame(i) => (MyMsg::Frame(render.frames[i].1.png.clone()), ClientState::NeedsFrame(i+1)),
+            ClientState::NeedsGif => {
+                match render.gif.as_ref() {
+                    // Send the gif
+                    Some(gif) => (MyMsg::Frame(gif.clone()), ClientState::Complete),
+                    // No gif available yet
+                    None => break,
+                }
+            },
+            // Client is up to date
+            ClientState::Complete => break,
+        };
+        // If the send was sccessful, increment the progress for this client
+        match addr.try_send(msg) {
+            Ok(()) => *cs = next_cs,
+            Err(actix::prelude::SendError::Full(_)) => {
+                println!("failed to send to full mailbox");
+                break
+            },
+            Err(actix::prelude::SendError::Closed(_)) => {
+                // TODO: unregister?
+                println!("ERROR failed to send to closed mailbox");
+                break
+            },
+        }
+    }
+}

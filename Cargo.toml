@@ -16,8 +16,7 @@ serde_json = "1.0"
 
 # https://github.com/emoon/rust_minifb/issues/256 - wayland doesn't update the window
 bvh = { version = "0.6", features = ["serde_impls"] }
-crossbeam = "0.6"
-crossbeam-channel = "0.4"
+crossbeam = "0.7"
 glam = { version = "0.18", features = ["serde"] }
 image = { version = "0.23", default-features = false, features = ["gif", "png"] }
 minifb = { optional = true, version = "0.19.3", features = ["x11"], default-features = false }
@@ -28,7 +27,7 @@ spiral = "0.1.9"
 
 futures = { version = "0.3", features = ["executor", "thread-pool"] }
 serde = { version = "1", features = ["derive"] }
-hadean = { optional = true, path = "/home/aidanhs/.hadean/sdk/crates/hadean" }
+hadean = { optional = true, path = "hadean-sdk-symlink" }
 
 bincode = "1.3"
 

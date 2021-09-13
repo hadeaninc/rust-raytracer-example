@@ -140,7 +140,28 @@ impl Renderer {
         }
     }
 
-    pub fn render_frame_parallel(self, pool: &mut impl ParallelExecutor) -> impl Stream<Item=(RenderBlock, image::RgbImage)> {
+    pub fn width(&self) -> u32 {
+        self.image_width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.image_height
+    }
+
+    pub fn render_frame_single(self, pool: &impl ParallelExecutor) -> impl Future<Output=image::RgbImage> {
+        let renderblock = RenderBlock { x: 0, y: 0, width: self.image_width, height: self.image_height };
+        pool.execute(render_block, Ctx {
+            renderblock,
+            image_width: self.image_width,
+            image_height: self.image_height,
+            scene: self.scene.clone(),
+            camera: self.camera.clone(),
+            samples_per_pixel: self.samples_per_pixel,
+            max_depth: self.max_depth,
+        }).map(move |image| image::RgbImage::from_raw(renderblock.width, renderblock.height, image).unwrap())
+    }
+
+    pub fn render_frame_parallel(self, pool: &impl ParallelExecutor) -> impl Stream<Item=(RenderBlock, image::RgbImage)> {
         // Generate blocks to render the image
         let blocker = ImageBlocker::new(self.image_width, self.image_height);
         let block_count_x = blocker.block_count_x as i32;
@@ -163,22 +184,19 @@ impl Renderer {
         }
 
         // Loop blocks in the image blocker and spawn renderblock tasks
-        let mut futs = futures::stream::FuturesOrdered::new();
-        for renderblock in spiral_blocks {
-            futs.push(
-                pool.execute(render_block, Ctx {
-                    renderblock,
-                    image_width: self.image_width,
-                    image_height: self.image_height,
-                    scene: self.scene.clone(),
-                    camera: self.camera.clone(),
-                    samples_per_pixel: self.samples_per_pixel,
-                    max_depth: self.max_depth,
-                }).map(move |image|
-                    (renderblock, image::RgbImage::from_raw(renderblock.width, renderblock.height, image).unwrap())
-                )
-            );
-        }
+        let futs: futures::stream::FuturesUnordered<_> = spiral_blocks.into_iter().map(|renderblock| {
+            pool.execute(render_block, Ctx {
+                renderblock,
+                image_width: self.image_width,
+                image_height: self.image_height,
+                scene: self.scene.clone(),
+                camera: self.camera.clone(),
+                samples_per_pixel: self.samples_per_pixel,
+                max_depth: self.max_depth,
+            }).map(move |image|
+                (renderblock, image::RgbImage::from_raw(renderblock.width, renderblock.height, image).unwrap())
+            )
+        }).collect();
 
         futs
     }
