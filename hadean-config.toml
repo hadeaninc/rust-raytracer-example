@@ -1,0 +1,25 @@
+args = "serve"
+
+[requirements]
+# Number of cores each user process uses, affects scheduling and
+# machine allocation
+cores = "1/16"
+# Amount of memory required by each user process, same as above
+memory = "8 MiB"
+
+[tools]
+# These features are not available in the freemium version of the
+# Hadean SDK
+tracing_enabled = false
+debugging_enabled = false
+
+[cluster]
+# The number of machines to allocate in preparation for scaling up.
+# 0  = always allocate just in time and scale down immediately
+# 1  = keep a VM around between runs that makes rapid iteration easier
+# 2+ = keep n VMs around between runs and always keep n-1 VMs on hand
+#      ready to use while your application is scaling
+standby_machines = 2
+# The time (in seconds) after which all standby machines will be
+# deallocated after an application has stopped.
+machines_timeout = 3600
