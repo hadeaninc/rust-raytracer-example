@@ -49,6 +49,8 @@ For this specific repository the deploy and run commands are structured like thi
 
 `hadean cluster -n <cluster name> run ./hadean-config.toml` to run the application on the remote cluster. This is configured to run as a web server.
 
+If you want to scale this beyond one machine, change the line in `src/main.rs` that says `let cpus = num_cpus::get() - 1;` to `let cpus = 14;` and watch it scale up! Note that machines can take a while to start up on the cloud - you'll know when more than one machine is in use because your web server will list multiple IP addresses in the cluster status.
+
 # Viewing the remote web server's output
 
 To see the output of a remote raytracer run you'll need to grab the IP address of the machine that is running the web server. This can be obtained from the mesasges printed out by the remote run. As an example the final message of a run looks like this:

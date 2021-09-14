@@ -3,7 +3,7 @@ args = "serve"
 [requirements]
 # Number of cores each user process uses, affects scheduling and
 # machine allocation
-cores = "1/16"
+cores = "1"
 # Amount of memory required by each user process, same as above
 memory = "8 MiB"
 

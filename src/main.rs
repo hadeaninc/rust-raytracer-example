@@ -190,14 +190,11 @@ struct Opt {
 #[derive(Debug, StructOpt)]
 enum Cmd {
     #[structopt(about = "start a web server with a rendering control panel on 0.0.0.0:28888")]
-    Serve {
-        cpus: Option<usize>,
-    },
+    Serve,
     #[structopt(about = "render an X11 window with a single frame being processed in parallel in blocks")]
     Window {
         #[structopt(long)]
         out_file: Option<PathBuf>,
-        cpus: Option<usize>,
     },
     #[structopt(about = "perform some size analysis, useful for assessing how much data may move over the wire")]
     SizeAnalyze,
@@ -212,12 +209,14 @@ fn main() {
 
     let opt = Opt::from_args();
 
+    let cpus = num_cpus::get() - 1;
+
     match opt.cmd {
-        Cmd::Serve { cpus } => {
-            server::main("0.0.0.0:28888".to_owned(), cpus.unwrap_or_else(|| num_cpus::get() - 1))
+        Cmd::Serve => {
+            server::main("0.0.0.0:28888".to_owned(), cpus)
         },
-        Cmd::Window { cpus, out_file } => {
-            window::main(out_file, cpus.unwrap_or_else(|| num_cpus::get() - 1))
+        Cmd::Window { out_file } => {
+            window::main(out_file, cpus)
         },
         Cmd::SizeAnalyze => {
             let width = 1280/4;
