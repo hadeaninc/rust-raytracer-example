@@ -14,7 +14,7 @@ Makes use of:
 
 # Build 
 
-`ln -s ~/.hadean/sdk/crates/hadean hadean-sdk-symlink` set a symlink to the Hadean SDK crate which Cargo.toml is configured to use.
+`ln -s ~/.hadean/sdk/crates/hadean hadean-sdk-symlink` to set a symlink to the Hadean SDK crate which Cargo.toml is configured to use.
 
 `cargo build --release` to build the application. Release builds recommended for speed!
 # Local Usage
@@ -25,7 +25,7 @@ Makes use of:
 
 # Running on a Hadean Cluster
 
-For this you'll need a remote cluster configured for use with Hadean's Platform SDK which is explained [here](https://docs.hadean.com/platform/getting-started/distributing-an-app-in-the-cloud).
+For this you'll need a remote cluster configured for use with the Hadean Platform SDK which is explained [here](https://docs.hadean.com/platform/getting-started/distributing-an-app-in-the-cloud).
 
 For this specific repository the deploy and run commands are structured like this:
 
