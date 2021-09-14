@@ -60,6 +60,16 @@
     /* Custom CSS */
     #control {
         border: 1px black solid;
+        margin: 15px;
+        padding: 15px;
+    }
+    #control div {
+        margin: 2px;
+    }
+    #params-input {
+        border: 1px black solid;
+        margin: 5px;
+        padding: 5px;
     }
     #main {
         display: flex;
@@ -118,6 +128,7 @@
             //     ],
             //     ...
             //   ],
+            //   "pool_status": "some string representing pool status",
             // }
             // NOTE: must contain at least 'width', 'height' and 'total_frames'
             //
@@ -133,16 +144,17 @@
 
             let metaMsg = JSON.parse(msg.data);
             if (metaMsg.hasOwnProperty('job')) {
-                let job_entry = {};
+                let jobEntry = {};
                 metaMsg.job_fields.forEach(([field, _type]) => {
-                    job_entry[field] = this.state.job_entry[field] || '';
+                    jobEntry[field] = this.state.jobEntry[field] || '';
                 });
                 this.setState({
                     config: metaMsg,
                     nextBinary: null,
                     frames: Array(metaMsg.job.total_frames).fill(null),
                     gif: null,
-                    job_entry,
+                    jobEntry,
+                    poolStatus: metaMsg.pool_status,
                 });
             } else if (metaMsg.hasOwnProperty('frame')) {
                 this.setState({
@@ -159,7 +171,7 @@
         } else if (msg.data instanceof Blob) {
             // Blobs are either a rendered frame or a gif
 
-            if (typeof this.state.nextBinary !== 'object') {
+            if (this.state.nextBinary === null) {
                 console.log('not yet expecting a binary message');
             } else if (this.state.nextBinary.type === 'frame') {
                 let idx = this.state.nextBinary.index;
@@ -195,22 +207,23 @@
                 nextBinary: null,
                 frames: [],
                 gif: null,
-                job_entry: {},
+                jobEntry: {},
+                poolStatus: "[unknown]",
             };
         }
 
         handleJobEntryChange(field) {
             return (ev) => {
-                let job_entry = shallowClone(this.state.job_entry);
-                job_entry[field] = ev.target.value;
-                this.setState({ job_entry });
+                let jobEntry = shallowClone(this.state.jobEntry);
+                jobEntry[field] = ev.target.value;
+                this.setState({ jobEntry });
             }
         }
 
         handleClick() {
-            let job_entry = {};
+            let jobEntry = {};
             this.state.config.job_fields.forEach(([field, type]) => {
-                let strval = this.state.job_entry[field];
+                let strval = this.state.jobEntry[field];
                 let value;
                 if (type === 'string') {
                     value = strval;
@@ -223,23 +236,23 @@
                 } else {
                     console.log('unknown type', type, 'for submitting field', field);
                 }
-                job_entry[field] = value;
+                jobEntry[field] = value;
             })
-            ws.send(JSON.stringify(job_entry));
+            ws.send(JSON.stringify(jobEntry));
         }
 
         render() {
-            let { config, frames, gif, job_entry } = this.state;
+            let { config, frames, gif, jobEntry, poolStatus } = this.state;
 
-            let params_display = <div>{config.job_fields.map(([field, type]) => {
+            let params_display = <div id="params-input">{config.job_fields.map(([field, type]) => {
                 let inner;
                 if (type == 'string' || type == 'integer' || type == 'float') {
-                    inner = <input onChange={this.handleJobEntryChange(field)} value={job_entry[field]}></input>;
+                    inner = <input onChange={this.handleJobEntryChange(field)} value={jobEntry[field]}></input>;
                 } else if (type instanceof Array) {
                     inner = type.map((option, oi) => <div key={option}>
                         <input type="radio" id={field+'-'+option} name={field} value={option}
                             onChange={this.handleJobEntryChange(field)}
-                            checked={job_entry[field] === option} />
+                            checked={jobEntry[field] === option} />
                         <label htmlFor={field+'-'+option}>{option}</label>
                     </div>);
                 } else {
@@ -262,6 +275,7 @@
                 <div>
                     <div id="control">
                         <h1>Hadean Renderer</h1>
+                        <div>Pool status: <span style={{fontFamily: 'monospace'}}>{poolStatus}</span></div>
                         {params_display}
                         <button onClick={this.handleClick.bind(this)}>Re-render</button>
                         <div>Rendered {numRenderedFrames(frames)} of {config.job.total_frames} frames for {JSON.stringify(config.job)}</div>

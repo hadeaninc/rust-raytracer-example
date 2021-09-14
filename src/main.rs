@@ -34,6 +34,7 @@ mod parallel {
             T: Serialize + DeserializeOwned + Send + Unpin + 'static,
             R: Serialize + DeserializeOwned + Send + Unpin + 'static,
         >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>>;
+        fn status(&self) -> String;
     }
 
     impl ParallelExecutor for ThreadPool {
@@ -42,6 +43,9 @@ mod parallel {
             R: Serialize + DeserializeOwned + Send + Unpin + 'static,
         >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
             Box::pin(self.spawn_with_handle(futures::future::lazy(move |_| f(ctx))).unwrap())
+        }
+        fn status(&self) -> String {
+            "[running threads]".into()
         }
     }
 
@@ -53,6 +57,10 @@ mod parallel {
         // TODO: if I can make this a shared ref then make the trait shared ref too
         >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
             Box::pin(HadeanPool::execute(self, f, ctx))
+        }
+        fn status(&self) -> String {
+            let status = self.status();
+            format!("{:?}", status)
         }
     }
 
