@@ -130,8 +130,10 @@ enum MyMsg {
 enum MetaMsg {
     Frame { index: usize },
     Gif,
-    Reset(RenderJob),
+    Reset(RenderJob, PoolStatus),
 }
+
+type PoolStatus = String;
 
 impl Message for MyMsg {
     type Result = ();
@@ -143,10 +145,11 @@ impl Handler<MyMsg> for MyWs {
     fn handle(&mut self, msg: MyMsg, ctx: &mut Self::Context) {
         match msg {
             MyMsg::Binary(d) => ctx.binary(d),
-            MyMsg::Meta(MetaMsg::Reset(job)) =>
+            MyMsg::Meta(MetaMsg::Reset(job, pool_status)) =>
                 ctx.text(serde_json::json!({
                     "job": job,
                     "job_fields": render_job_fields(),
+                    "pool_status": pool_status,
                 }).to_string()),
             MyMsg::Meta(MetaMsg::Frame { index }) =>
                 ctx.text(serde_json::json!({
@@ -221,7 +224,7 @@ async fn index() -> HttpResponse {
     HttpResponse::Ok().set(ContentType::html()).encoding(ContentEncoding::Gzip).body(INDEX_HTML)
 }
 
-pub fn main(addr: String) {
+pub fn main(addr: String, cpus: usize) {
     let (job_tx, job_rx) = crossbeam::channel::unbounded();
     job_tx.send(Default::default()).unwrap(); // Reset to a valid job
 
@@ -250,7 +253,7 @@ pub fn main(addr: String) {
     let ref should_stop_bool = AtomicBool::new(false);
     let should_stop = || should_stop_bool.load(Ordering::SeqCst);
     let set_stop = || should_stop_bool.store(true, Ordering::SeqCst);
-    let pool = parallel::default_pool(num_cpus::get());
+    let pool = parallel::default_pool(cpus);
     let pool = &pool;
     crossbeam::scope(move |scope| {
         scope.spawn(move |scope| {
@@ -318,7 +321,7 @@ pub fn main(addr: String) {
                 }
 
                 // Update all connected clients
-                thread_state.with(update_clients);
+                thread_state.with(|ts| update_clients(ts, pool.status()));
 
                 let needs_gif = thread_state.with(|s| (
                     s.render.frames.len() == s.render.job.total_frames && s.render.gif.is_none()
@@ -434,17 +437,17 @@ fn render_gif(state: &mut MyServerDataInner) {
     state.render.gif = Some(gif);
 }
 
-fn update_clients(state: &mut MyServerDataInner) {
+fn update_clients(state: &mut MyServerDataInner, pool_status: String) {
     for (addr, cs) in state.clients.iter_mut() {
-        update_client(addr, cs, &state.render);
+        update_client(addr, cs, &state.render, &pool_status);
     }
 }
 
-fn update_client(addr: &Addr<MyWs>, cs: &mut ClientState, render: &RenderStatus) {
+fn update_client(addr: &Addr<MyWs>, cs: &mut ClientState, render: &RenderStatus, pool_status: &str) {
     loop {
         let (msg, next_cs) = match *cs {
             // Send the config
-            ClientState::NeedsConfig => (MyMsg::Meta(MetaMsg::Reset(render.job.clone())), ClientState::NeedsFrameMeta(0)),
+            ClientState::NeedsConfig => (MyMsg::Meta(MetaMsg::Reset(render.job.clone(), pool_status.to_owned())), ClientState::NeedsFrameMeta(0)),
             // Wants more frames, but the frames are finished - move onto the gif
             ClientState::NeedsFrameMeta(i) if i == render.job.total_frames => {
                 *cs = ClientState::NeedsGifMeta;

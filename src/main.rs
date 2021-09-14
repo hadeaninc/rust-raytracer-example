@@ -6,8 +6,7 @@ mod scene;
 mod server;
 mod shared;
 
-use std::env;
-use std::process;
+use std::path::PathBuf;
 use rand::{Rng, SeedableRng};
 
 use camera::Camera;
@@ -15,6 +14,7 @@ use material::{Dielectric, Lambertian, Material, Metal};
 use object::Sphere;
 use scene::Scene;
 use shared::{Color, Point3, Vec3, color_random, color_random_range};
+use structopt::StructOpt;
 
 mod parallel {
     use futures::executor::ThreadPool;
@@ -34,6 +34,7 @@ mod parallel {
             T: Serialize + DeserializeOwned + Send + Unpin + 'static,
             R: Serialize + DeserializeOwned + Send + Unpin + 'static,
         >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>>;
+        fn status(&self) -> String;
     }
 
     impl ParallelExecutor for ThreadPool {
@@ -42,6 +43,9 @@ mod parallel {
             R: Serialize + DeserializeOwned + Send + Unpin + 'static,
         >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
             Box::pin(self.spawn_with_handle(futures::future::lazy(move |_| f(ctx))).unwrap())
+        }
+        fn status(&self) -> String {
+            "[running threads]".into()
         }
     }
 
@@ -53,6 +57,10 @@ mod parallel {
         // TODO: if I can make this a shared ref then make the trait shared ref too
         >(&self, f: fn(T) -> R, ctx: T) -> Pin<Box<dyn Future<Output=R>>> {
             Box::pin(HadeanPool::execute(self, f, ctx))
+        }
+        fn status(&self) -> String {
+            let status = self.status();
+            format!("{:?}", status)
         }
     }
 
@@ -173,6 +181,28 @@ fn one_weekend_scene() -> Scene {
     return scene;
 }
 
+#[derive(Debug, StructOpt)]
+struct Opt {
+    #[structopt(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Debug, StructOpt)]
+enum Cmd {
+    #[structopt(about = "start a web server with a rendering control panel on 0.0.0.0:28888")]
+    Serve {
+        cpus: Option<usize>,
+    },
+    #[structopt(about = "render an X11 window with a single frame being processed in parallel in blocks")]
+    Window {
+        #[structopt(long)]
+        out_file: Option<PathBuf>,
+        cpus: Option<usize>,
+    },
+    #[structopt(about = "perform some size analysis, useful for assessing how much data may move over the wire")]
+    SizeAnalyze,
+}
+
 fn main() {
     std::env::set_var("RUST_BACKTRACE", "1"); // hack around hadean environment variables
     #[cfg(feature = "distributed")]
@@ -180,91 +210,84 @@ fn main() {
         hadean::hadean::init();
     }
 
-    let args: Vec<_> = env::args().collect();
+    let opt = Opt::from_args();
 
-    if args.len() == 2 && args[1] == "serve" {
+    match opt.cmd {
+        Cmd::Serve { cpus } => {
+            server::main("0.0.0.0:28888".to_owned(), cpus.unwrap_or_else(num_cpus::get))
+        },
+        Cmd::Window { cpus, out_file } => {
+            window::main(out_file, cpus.unwrap_or_else(num_cpus::get))
+        },
+        Cmd::SizeAnalyze => {
+            let width = 1280/4;
+            let height = 720/4;
+            let frames = 40;
 
-        server::main("0.0.0.0:28888".to_owned());
+            let block_size = 32;
 
-    } else if args.len() >= 2 && args[1] == "window" {
+            const CHANNELS: usize = 3;
+            const UNIT_BOUND: usize = 1024;
 
-        let out_file = if args.len() > 2 { Some(args[2].as_str()) } else { None };
-        window::main(out_file);
-
-    } else if args.len() == 2 && args[1] == "size-analyze" {
-
-        let width = 1280/4;
-        let height = 720/4;
-        let frames = 40;
-
-        let block_size = 32;
-
-        const CHANNELS: usize = 3;
-        const UNIT_BOUND: usize = 1024;
-
-        fn sizefmt(mut n: usize) -> String {
-            if n < UNIT_BOUND {
-                return format!("{}B", n)
+            fn sizefmt(mut n: usize) -> String {
+                if n < UNIT_BOUND {
+                    return format!("{}B", n)
+                }
+                n /= 1024;
+                if n < UNIT_BOUND {
+                    return format!("{}KiB", n)
+                }
+                n /= 1024;
+                return format!("{}MiB", n)
             }
-            n /= 1024;
-            if n < UNIT_BOUND {
-                return format!("{}KiB", n)
+
+            println!("# IMAGE");
+            println!("Considering an image of {}px x {}px with {} frames", width, height, frames);
+            let frame_bytes = width * height * CHANNELS;
+            println!("{} for pixels for a single uncompressed frame", sizefmt(frame_bytes));
+            println!("{} for all {} frames", sizefmt(frame_bytes * frames), frames);
+            println!("");
+
+            println!("# BLOCKS");
+            let approx_num_blocks_per_frame = (width * height) / (block_size * block_size);
+            let approx_block_overhead_per_frame = approx_num_blocks_per_frame * std::mem::size_of::<render::RenderBlock>();
+            let approx_block_overhead_total = approx_block_overhead_per_frame * frames;
+            println!("Processing with blocks adds approx {} per frame", sizefmt(approx_block_overhead_per_frame));
+            println!("Processing with blocks adds {} for all {} frames",  sizefmt(approx_block_overhead_total), frames);
+            println!("");
+
+            println!("# JOB");
+            let scene = one_weekend_scene();
+            let cam = one_weekend_cam(width, height);
+            let scene_bytes = bincode::serialized_size(&scene).unwrap() as usize;
+            let cam_bytes = bincode::serialized_size(&cam).unwrap() as usize;
+            let job_bytes = scene_bytes + cam_bytes;
+            let pct_scene = 100. * scene_bytes as f32 / (scene_bytes + cam_bytes) as f32;
+            println!("scene data is {} ({:.2}%) and cam data is {} ({:.2}%)", sizefmt(scene_bytes), pct_scene, sizefmt(cam_bytes), 100. - pct_scene);
+            println!("sending job data per frame costs {} for all {} frames", sizefmt(job_bytes * frames), frames);
+            println!("sending job data per block costs {} for all {} frames", sizefmt(job_bytes * frames * approx_num_blocks_per_frame), frames);
+            println!("");
+
+            println!("# PIXELRESULT (old way of transferring data)");
+            struct PixelResult {
+                _x: u32,
+                _y: u32,
+                _color: Color,
             }
-            n /= 1024;
-            return format!("{}MiB", n)
-        }
-
-        println!("# IMAGE");
-        println!("Considering an image of {}px x {}px with {} frames", width, height, frames);
-        let frame_bytes = width * height * CHANNELS;
-        println!("{} for pixels for a single uncompressed frame", sizefmt(frame_bytes));
-        println!("{} for all {} frames", sizefmt(frame_bytes * frames), frames);
-        println!("");
-
-        println!("# BLOCKS");
-        let approx_num_blocks_per_frame = (width * height) / (block_size * block_size);
-        let approx_block_overhead_per_frame = approx_num_blocks_per_frame * std::mem::size_of::<render::RenderBlock>();
-        let approx_block_overhead_total = approx_block_overhead_per_frame * frames;
-        println!("Processing with blocks adds approx {} per frame", sizefmt(approx_block_overhead_per_frame));
-        println!("Processing with blocks adds {} for all {} frames",  sizefmt(approx_block_overhead_total), frames);
-        println!("");
-
-        println!("# JOB");
-        let scene = one_weekend_scene();
-        let cam = one_weekend_cam(width, height);
-        let scene_bytes = bincode::serialized_size(&scene).unwrap() as usize;
-        let cam_bytes = bincode::serialized_size(&cam).unwrap() as usize;
-        let job_bytes = scene_bytes + cam_bytes;
-        let pct_scene = 100. * scene_bytes as f32 / (scene_bytes + cam_bytes) as f32;
-        println!("scene data is {} ({:.2}%) and cam data is {} ({:.2}%)", sizefmt(scene_bytes), pct_scene, sizefmt(cam_bytes), 100. - pct_scene);
-        println!("sending job data per frame costs {} for all {} frames", sizefmt(job_bytes * frames), frames);
-        println!("sending job data per block costs {} for all {} frames", sizefmt(job_bytes * frames * approx_num_blocks_per_frame), frames);
-        println!("");
-
-        println!("# PIXELRESULT (old way of transferring data)");
-        struct PixelResult {
-            _x: u32,
-            _y: u32,
-            _color: Color,
-        }
-        let pixelresult_frame_bytes = width * height * std::mem::size_of::<PixelResult>();
-        println!("{} for a frame's worth of PixelResults", sizefmt(pixelresult_frame_bytes));
-        println!("{} for all {} frames", sizefmt(pixelresult_frame_bytes * frames), frames);
-        println!("");
-
-    } else {
-
-        println!("invalid command: {:?}", args);
-        process::exit(1);
-
+            let pixelresult_frame_bytes = width * height * std::mem::size_of::<PixelResult>();
+            println!("{} for a frame's worth of PixelResults", sizefmt(pixelresult_frame_bytes));
+            println!("{} for all {} frames", sizefmt(pixelresult_frame_bytes * frames), frames);
+            println!("");
+        },
     }
 }
 
 #[cfg(not(feature = "gui"))]
 mod window {
+    use std::path::PathBuf;
     use std::process;
 
-    pub fn main(_out_file: Option<&str>) {
+    pub fn main(_out_file: Option<PathBuf>, _cpus: usize) {
         println!("gui support not compiled in - please recompile with 'gui' feature");
         process::exit(1);
     }
@@ -274,6 +297,7 @@ mod window {
 mod window {
     use futures::prelude::*;
     use minifb::{Key, Window, WindowOptions};
+    use std::path::PathBuf;
 
     use crate::parallel;
     use crate::render;
@@ -334,7 +358,7 @@ mod window {
 
         let mut buffer_display = vec![0; WIDTH * HEIGHT];
 
-        let mut pool = parallel::default_pool(num_cpus::get());
+        let mut pool = parallel::default_pool(cpus);
 
         crossbeam::scope(|scope| {
             let (tx, rx) = crossbeam::channel::unbounded();
