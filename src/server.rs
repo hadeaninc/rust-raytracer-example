@@ -311,7 +311,7 @@ pub fn main(addr: String, cpus: usize) {
                                 thread_state.lock().render.frames.push((idx, RenderFrame { img, png }));
                             },
                             Err(crossbeam::channel::RecvError) => {
-                                println!("channel for receiving frames closed");
+                                println!("finished receiving frames");
                                 frame_rx = None
                             },
                         }

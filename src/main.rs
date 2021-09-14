@@ -214,10 +214,10 @@ fn main() {
 
     match opt.cmd {
         Cmd::Serve { cpus } => {
-            server::main("0.0.0.0:28888".to_owned(), cpus.unwrap_or_else(num_cpus::get))
+            server::main("0.0.0.0:28888".to_owned(), cpus.unwrap_or_else(|| num_cpus::get() - 1))
         },
         Cmd::Window { cpus, out_file } => {
-            window::main(out_file, cpus.unwrap_or_else(num_cpus::get))
+            window::main(out_file, cpus.unwrap_or_else(|| num_cpus::get() - 1))
         },
         Cmd::SizeAnalyze => {
             let width = 1280/4;
