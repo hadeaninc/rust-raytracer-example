@@ -224,7 +224,7 @@ async fn index() -> HttpResponse {
     HttpResponse::Ok().set(ContentType::html()).encoding(ContentEncoding::Gzip).body(INDEX_HTML)
 }
 
-pub fn main(addr: String) {
+pub fn main(addr: String, cpus: usize) {
     let (job_tx, job_rx) = crossbeam::channel::unbounded();
     job_tx.send(Default::default()).unwrap(); // Reset to a valid job
 
@@ -253,7 +253,7 @@ pub fn main(addr: String) {
     let ref should_stop_bool = AtomicBool::new(false);
     let should_stop = || should_stop_bool.load(Ordering::SeqCst);
     let set_stop = || should_stop_bool.store(true, Ordering::SeqCst);
-    let pool = parallel::default_pool(num_cpus::get());
+    let pool = parallel::default_pool(cpus);
     let pool = &pool;
     crossbeam::scope(move |scope| {
         scope.spawn(move |scope| {
