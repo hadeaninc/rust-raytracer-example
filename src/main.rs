@@ -210,6 +210,7 @@ fn main() {
     let opt = Opt::from_args();
 
     let cpus = num_cpus::get() - 1;
+    //let cpus = 14;
 
     match opt.cmd {
         Cmd::Serve => {

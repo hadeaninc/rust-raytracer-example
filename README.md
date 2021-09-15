@@ -53,9 +53,9 @@ If you want to scale this beyond one machine, change the line in `src/main.rs` t
 
 # Viewing the remote web server's output
 
-To see the output of a remote raytracer run you'll need to grab the IP address of the machine that is running the web server. This can be obtained from the mesasges printed out by the remote run. As an example the final message of a run looks like this:
+To see the output of a remote raytracer run you'll need to grab the IP address of the machine that is running the web server. This can be obtained from the messages printed out by the remote run. The first line of a remote run looks like this:
 
-`[2021-09-14T15:13:17Z INFO ] 51.132.180.74.20004.0: finished receiving frames`
+`[2021-09-14T15:13:17Z INFO ] 51.132.180.74.20004.0: Server starting on 0.0.0.0:28888`
 
 In this line of output the IP address is represented by the numbers `51.132.180.74`. You'll need to change this to match your remote machine's IP address.
 
