@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en" class="no-js">
+
+<head>
+<meta charset="utf-8">
+<script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+<script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
+<style>
+    /* http://meyerweb.com/eric/tools/css/reset/
+       v2.0 | 20110126
+       License: none (public domain)
+    */
+
+    html, body, div, span, applet, object, iframe,
+    h1, h2, h3, h4, h5, h6, p, blockquote, pre,
+    a, abbr, acronym, address, big, cite, code,
+    del, dfn, em, img, ins, kbd, q, s, samp,
+    small, strike, strong, sub, sup, tt, var,
+    b, u, i, center,
+    dl, dt, dd, ol, ul, li,
+    fieldset, form, label, legend,
+    table, caption, tbody, tfoot, thead, tr, th, td,
+    article, aside, canvas, details, embed,
+    figure, figcaption, footer, header, hgroup,
+    menu, nav, output, ruby, section, summary,
+    time, mark, audio, video {
+        margin: 0;
+        padding: 0;
+        border: 0;
+        font-size: 100%;
+        font: inherit;
+        vertical-align: baseline;
+    }
+    /* HTML5 display-role reset for older browsers */
+    article, aside, details, figcaption, figure,
+    footer, header, hgroup, menu, nav, section {
+        display: block;
+    }
+    body {
+        line-height: 1;
+    }
+    ol, ul {
+        list-style: none;
+    }
+    blockquote, q {
+        quotes: none;
+    }
+    blockquote:before, blockquote:after,
+    q:before, q:after {
+        content: '';
+        content: none;
+    }
+    table {
+        border-collapse: collapse;
+        border-spacing: 0;
+    }
+</style>
+<style>
+    /* Custom CSS */
+    #control {
+        border: 1px black solid;
+        margin: 15px;
+        padding: 15px;
+    }
+    #control div {
+        margin: 2px;
+    }
+    #params-input {
+        border: 1px black solid;
+        margin: 5px;
+        padding: 5px;
+    }
+    #main {
+        display: flex;
+        justify-content: center;
+    }
+    #main img {
+        margin: 10px;
+        border: 2px black solid;
+    }
+    #thumbs {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+    #thumbs img {
+        margin: 2px;
+        border: 1px black solid;
+    }
+</style>
+</head>
+
+<body>
+<div id="root"></div>
+<script type="text/babel">
+
+    let BLACK_PIXEL = 'data:image/gif;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    let THUMB_MAX_PX_DIMENSION = 50;
+
+    let ws = new WebSocket('ws://' + window.location.host + '/ws');
+
+    function shallowClone(o) {
+        return Object.assign({}, o);
+    }
+
+    function blobToDataURL(blob, callback) {
+        var a = new FileReader();
+        a.onload = function (e) {callback(e.target.result);}
+        a.readAsDataURL(blob);
+    }
+
+    function numRenderedFrames(frames) {
+        return frames.reduce((count, f) => count + (f === null ? 0 : 1), 0);
+    }
+
+    function handleWSMessage(msg) {
+        if (typeof msg.data === 'string') {
+            // Strings on the websocket are JSON-formatted config messages of one of the following variants
+            //
+            // VARIANT 1: resets rendering:
+            // {
+            //   "job": { "field1": <value1>, ... },
+            //   "job_fields": [
+            //     [
+            //       "field1",
+            //       "string" | "integer" | "float" | [ "stringoption1", "stringoption2", ... ]
+            //     ],
+            //     ...
+            //   ],
+            //   "pool_status": "some string representing pool status",
+            // }
+            // NOTE: must contain at least 'width', 'height' and 'total_frames'
+            //
+            // VARIANT 2: indicates the next binary message will be frame <index>
+            // {
+            //   "frame": <index>,
+            // }
+            //
+            // VARIANT 3: indicates the next binary message will be the gif
+            // {
+            //   "gif": null,
+            // }
+
+            let metaMsg = JSON.parse(msg.data);
+            if (metaMsg.hasOwnProperty('job')) {
+                let jobEntry = {};
+                metaMsg.job_fields.forEach(([field, _type]) => {
+                    jobEntry[field] = this.state.jobEntry[field] || '';
+                });
+                this.setState({
+                    config: metaMsg,
+                    nextBinary: null,
+                    frames: Array(metaMsg.job.total_frames).fill(null),
+                    gif: null,
+                    jobEntry,
+                    poolStatus: metaMsg.pool_status,
+                });
+            } else if (metaMsg.hasOwnProperty('frame')) {
+                this.setState({
+                    nextBinary: { type: 'frame', index: metaMsg['frame'] },
+                });
+            } else if (metaMsg.hasOwnProperty('gif')) {
+                this.setState({
+                    nextBinary: { type: 'gif' },
+                });
+            } else {
+                console.log('unknown meta msg:', metaMsg);
+            }
+
+        } else if (msg.data instanceof Blob) {
+            // Blobs are either a rendered frame or a gif
+
+            if (this.state.nextBinary === null) {
+                console.log('not yet expecting a binary message');
+            } else if (this.state.nextBinary.type === 'frame') {
+                let idx = this.state.nextBinary.index;
+                // Convert to a data url and add to the slot when it's ready
+                blobToDataURL(msg.data, (frame) => {
+                    let frames = this.state.frames.slice();
+                    frames[idx] = frame;
+                    this.setState({ frames });
+                });
+            } else if (this.state.nextBinary.type === 'gif') {
+                let renderedFrames = numRenderedFrames(this.state.frames);
+                if (renderedFrames !== this.state.config.job.total_frames) {
+                    console.log('got a gif before we expected', renderedFrames, this.state.config.job.total_frames);
+                }
+                // If we've already got all frames it must be the gif
+                blobToDataURL(msg.data, (gif) => this.setState({ gif }));
+            } else {
+                console.log('unknown binary message type');
+            }
+            this.setState({ nextBinary: null });
+
+        } else {
+            console.log('unknown websocket msg', msg);
+        }
+    }
+
+    class Root extends React.Component {
+        constructor(props) {
+            super(props);
+            ws.onmessage = handleWSMessage.bind(this);
+            this.state = {
+                config: { job: { 'width': 1, 'height': 1, 'total_frames': 0 }, job_fields: [] },
+                nextBinary: null,
+                frames: [],
+                gif: null,
+                jobEntry: {},
+                poolStatus: "[unknown]",
+            };
+        }
+
+        handleJobEntryChange(field) {
+            return (ev) => {
+                let jobEntry = shallowClone(this.state.jobEntry);
+                jobEntry[field] = ev.target.value;
+                this.setState({ jobEntry });
+            }
+        }
+
+        handleClick() {
+            let jobEntry = {};
+            this.state.config.job_fields.forEach(([field, type]) => {
+                let strval = this.state.jobEntry[field];
+                let value;
+                if (type === 'string') {
+                    value = strval;
+                } else if (type == 'integer') {
+                    value = parseInt(strval, 10);
+                } else if (type == 'float') {
+                    value = parseFloat(strval);
+                } else if (type instanceof Array) {
+                    value = strval;
+                } else {
+                    console.log('unknown type', type, 'for submitting field', field);
+                }
+                jobEntry[field] = value;
+            })
+            ws.send(JSON.stringify(jobEntry));
+        }
+
+        render() {
+            let { config, frames, gif, jobEntry, poolStatus } = this.state;
+
+            let params_display = <div id="params-input">{config.job_fields.map(([field, type]) => {
+                let inner;
+                if (type == 'string' || type == 'integer' || type == 'float') {
+                    inner = <input onChange={this.handleJobEntryChange(field)} value={jobEntry[field]}></input>;
+                } else if (type instanceof Array) {
+                    inner = type.map((option, oi) => <div key={option}>
+                        <input type="radio" id={field+'-'+option} name={field} value={option}
+                            onChange={this.handleJobEntryChange(field)}
+                            checked={jobEntry[field] === option} />
+                        <label htmlFor={field+'-'+option}>{option}</label>
+                    </div>);
+                } else {
+                    console.log('unknown type', type, 'for rendering field', field);
+                    inner = <p>{'unkown field type for field ' + field}</p>;
+                }
+                return <div key={field}>{field}: {inner}</div>;
+            })}</div>;
+
+            let max_dimension = Math.max(config.job.width, config.job.height);
+            let scale_factor = THUMB_MAX_PX_DIMENSION / max_dimension;
+            let width = config.job.width * scale_factor;
+            let height = config.job.height * scale_factor;
+            let frames_display = frames.map((frame, i) => {
+                let src = frame === null ? BLACK_PIXEL : frame;
+                return <img key={i} width={width} height={height} src={src}></img>
+            });
+
+            return (
+                <div>
+                    <div id="control">
+                        <h1>Hadean Renderer</h1>
+                        <div>Pool status: <span style={{fontFamily: 'monospace'}}>{poolStatus}</span></div>
+                        {params_display}
+                        <button onClick={this.handleClick.bind(this)}>Re-render</button>
+                        <div>Rendered {numRenderedFrames(frames)} of {config.job.total_frames} frames for {JSON.stringify(config.job)}</div>
+                    </div>
+                    <div id="main"><img width={config.job.width} height={config.job.height} src={gif === null ? BLACK_PIXEL : gif}></img></div>
+                    <div id="thumbs">{frames_display}</div>
+                </div>
+            );
+        }
+    }
+
+    ReactDOM.render(<Root />, document.getElementById('root'));
+
+</script>
+</body>
+
+</html>
