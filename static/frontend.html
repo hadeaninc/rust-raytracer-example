@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Renderer</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.1/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+      integrity="sha384-F3w7mX95PdgyTmZZMECAngseQB83DfGTowi0iMjiWaeVhAn4FJkqJByhZMI3AhiU"
+      crossorigin="anonymous">
+    <style type="text/css">
+      header img {
+          display: inline;
+          height: 2em;
+          vertical-align: center;
+      }
+
+      h1 {
+          border-bottom: 2px dashed silver;
+          margin-bottom: 2rem;
+      }
+
+      section { padding-bottom: 1rem; }
+      header {
+          text-align: center;
+          margin-bottom: 1rem;
+      }
+
+      .output .animation {
+          display: flex;
+          width: 100%;
+          background-color: silver;
+          margin-bottom: 10px;
+      }
+      .output .animation:before {
+          content: '';
+          float: left;
+          padding-top: 50%;
+      }
+      .output .frames {
+          display: flex;
+          flex-wrap: wrap;
+          width: 100%;
+          justify-content: flex-start;
+      }
+      .output .frames * {
+          background-color: silver;
+          border: 1px solid black;
+          width: 32px;
+          height: 18px;
+          margin-right: 5px;
+      }
+
+      .input .btn-group { width: 100%; }
+      .input .input-group-text { min-width: 50%; }
+      .input .btn { min-width: 50%; }
+      .processes {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(5rem, 1fr));
+          grid-gap: 0.5rem;
+          padding-left: 0;
+      }
+      .processes>*:before {
+          content: '';
+          float: left;
+          padding-top: 100%;
+      }
+      .processes .button * {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+      }
+      .processes .button button {
+          font-size: 3em;
+          width: 75%;
+          height: 75%;
+          border-radius: 10%;
+          border-style: none;
+          background-color: whitesmoke;
+      }
+      .processes>* {
+          position: relative;
+          display: block;
+      }
+      .processes>*>* {
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          display: flex;
+          align-items: center;
+          text-align: center;
+      }
+      .processes .process * {
+          justify-content: space-between;
+          flex-direction: column;
+      }
+      .processes .process .status {
+          width: 100%;
+          margin: 0.2rem;
+      }
+      .processes .process button {
+          border-style: none;
+          color: red;
+          background-color: whitesmoke;
+          width: 100%;
+      }
+      .processes .process .info {
+          font-size: 0.8em;
+          font-family: monospace;
+          margin: 0.2rem;
+      }
+
+      .processes>*.pending.process { background-color: skyblue; }
+      .processes>*.ready.process { background-color: palegreen; }
+      .processes>*.working.process { background-color: orange; }
+      .processes>*.error.process { background-color: tomato; }
+    </style>
+  </head>
+  <body>
+    <header class="row">
+      <h1>
+        <a href="https://hadean.com/"><img src="hadean.svg"></a>
+        Hadean Renderer
+      </h1>
+    </header>
+
+    <div class="container">
+      <main class="row">
+        <section class="output order-1 order-lg-2 col-lg-8">
+          <h2>Output</h2>
+
+          <div class="animation">
+          </div>
+          <div class="frames">
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+            <div class="frame"></div>
+          </div>
+        </section>
+
+        <section class="input order-2 order-lg-1 col-lg-4">
+          <section>
+            <h2>Parameters</h2>
+            <div class="input-group">
+              <span class="input-group-text">Height (pixels):</span>
+              <input type="number" name="height" class="form-control" value="180">
+            </div>
+
+            <div class="input-group">
+              <span class="input-group-text">Width (pixels):</span>
+              <input type="number" name="width" class="form-control" value="320">
+            </div>
+
+            <div class="input-group">
+              <span class="input-group-text">Total frames:</span>
+              <input type="number" name="total_frames" class="form-control" value="40">
+            </div>
+
+            <div class="input-group">
+              <span class="input-group-text">Samples per pixel:</span>
+              <input type="number" name="samples_per_pixel" class="form-control" value="32">
+            </div>
+
+            <div class="btn-group" role="group">
+              <button type="button" class="btn btn-primary">Render</button>
+              <button type="button" class="btn btn-secondary" disabled="">Download</button>
+            </div>
+          </section>
+
+          <section>
+            <h2>Processes</h2>
+            <ul class="processes">
+              <li class="button">
+                <div>
+                  <button type="button">+</button>
+                </div>
+              </li>
+              <li class="pending process">
+                <div>
+                  <div class="info">Spawning...</div>
+                </div>
+              </li>
+              <li class="pending process">
+                <div>
+                  <div class="info">Spawning...</div>
+                </div>
+              </li>
+              <li class="error process">
+                <div>
+                  <div class="info">Spawn Resources Unavailable</div>
+                  <button type="button">×</button>
+                </div>
+              </li>
+              <li class="ready process">
+                <div>
+                  <div class="info">Idle</div>
+                  <button type="button">×</button>
+                </div>
+              </li>
+              <li class="working process">
+                <div>
+                  <div class="info">Rendering Frame 10</div>
+                </div>
+              </li>
+            </div>
+          </section>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
