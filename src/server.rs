@@ -1,7 +1,6 @@
 use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, Running, StreamHandler};
 use actix_web::{App, Error, HttpResponse, HttpRequest, HttpServer};
-use actix_web::dev::BodyEncoding;
-use actix_web::http::header::{ContentEncoding, ContentType};
+use actix_web::http::header::ContentEncoding;
 use actix_web::middleware;
 use actix_web::web;
 use actix_web_actors::ws;
@@ -18,8 +17,6 @@ use crate::render;
 use crate::scene::Scene;
 use crate::shared::Point3;
 use crate::{one_weekend_cam_lookat, one_weekend_scene};
-
-static INDEX_HTML: &[u8] = include_bytes!("../static/index.html");
 
 const THUMB_MAX_PX: u32 = 50;
 
@@ -220,8 +217,11 @@ async fn ws(state: ServerData, req: HttpRequest, stream: web::Payload) -> Result
     resp
 }
 
-async fn index() -> HttpResponse {
-    HttpResponse::Ok().set(ContentType::html()).encoding(ContentEncoding::Gzip).body(INDEX_HTML)
+async fn index(req: HttpRequest) -> actix_web::Result<actix_files::NamedFile> {
+    let path = req.match_info().query("filename");
+    Ok(actix_files::NamedFile::open(
+        std::path::Path::new("static")
+            .join(if path.is_empty() { "index.html" } else { path }))?)
 }
 
 pub fn main(addr: String, cpus: usize) {
@@ -239,15 +239,13 @@ pub fn main(addr: String, cpus: usize) {
     };
 
     let app_state = state.clone();
-    let app_factory = move || {
-        let app = App::new();
-        let app = app.data(app_state.clone());
-        let app = app.wrap(middleware::Logger::default());
-        let app = app.wrap(middleware::Compress::new(ContentEncoding::Auto));
-        let app = app.route("/ws", web::get().to(ws));
-        let app = app.route("/", web::get().to(index));
-        app
-    };
+    let app_factory = move || App::new()
+        .data(app_state.clone())
+        .wrap(middleware::Logger::default())
+        .wrap(middleware::Compress::new(ContentEncoding::Auto))
+        .route("/ws", web::get().to(ws))
+        .route("/{filename:.*}", web::get().to(index))
+        ;
 
     let thread_state = state.clone();
     let ref should_stop_bool = AtomicBool::new(false);
