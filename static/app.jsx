@@ -1,5 +1,5 @@
-const GREY = "data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR42mM88Z+BAQAGJwHJ3qipmgAAAABJRU5ErkJggg==";
-const MAGENTA = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEElEQVR42mP8z/D/PwMQAAAS/wL/eBxg8AAAAABJRU5ErkJggg==";
+const GREY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR42mM88Z+BAQAGJwHJ3qipmgAAAABJRU5ErkJggg==";
+const PINK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEElEQVR42mP8z/D/PwMQAAAS/wL/eBxg8AAAAABJRU5ErkJggg==";
 
 let Process = ({onKill, children: {pid, info, state}}) =>
 <li key={pid} className={state + " process"}>
@@ -48,7 +48,7 @@ let Parameters = ({onRender, ready, children: parameters}) =>
                       className="form-control"
                       type={type}
                       name={name}
-                      value={value}
+                      defaultValue={value}
                   />
               </div>;
     })}
@@ -67,10 +67,10 @@ let Parameters = ({onRender, ready, children: parameters}) =>
     </div>
 </section>;
 
-let Output = ({gif = GREY, children}) =>
+let Output = ({animation = GREY, children}) =>
 <section className="output order-1 order-lg-2 col-lg-8">
     <h2>Output</h2>
-    <img className="animation" src={gif} />
+    <img className="animation" src={animation} />
     <div className="frames">
         {children.map((frame, index) =>
             <img key={index} className="frame" src={frame.src || GREY} />
@@ -92,16 +92,16 @@ class App extends React.Component {
                 [ "samples_per_pixel", { label: "Samples per pixel", value: 32 } ],
             ]),
             processes: new Map([
-                [ "1", { state: "working", info: "Rendering Frame 10", frame: 10 } ],
-                [ "2", { state: "ready", info: "Idle" } ],
-                [ "3", { state: "error", info: "Spawn Resources Unavailable" } ],
+                // [ "1", { state: "working", info: "Rendering Frame 10", frame: 10 } ],
+                // [ "2", { state: "ready", info: "Idle" } ],
+                // [ "3", { state: "error", info: "Spawn Resources Unavailable" } ],
             ]),
         };
     }
 
     render = () =>
     <main className="row">
-        <Output>{this.state.frames}</Output>
+        <Output animation={this.state.animation}>{this.state.frames}</Output>
         <section className="input order-2 order-lg-1 col-lg-4">
             <Parameters onRender={this.onRender}>
                 {this.state.parameters}
@@ -113,28 +113,63 @@ class App extends React.Component {
     </main>;
 
     updateFrame = (id, frame) => {
-        this.setState({
-            frames: this.state.frames.map(
+        this.setState(s => ({
+            frames: s.frames.map(
                 (frame_, id_) => id == id_
                     ? { ...frame_, ...frame }
-                    : frame,
+                    : frame_,
             ),
-        });
+        }));
     };
 
     updateProcess = (id, process) => {
-        this.setState({
+        this.setState(s => ({
             processes: new Map(Array.from(
-                this.state.processes,
+                s.processes,
                 ([id_, process_]) => id !== id_
                     ? [id_, process_]
                     : [id_, { ...process_, ...process }],
             )),
-        });
+        }));
+    };
+
+    runProcess = (pid) => {
+        let process = { ...this.state.processes.get(pid) };
+        let ownedFrames = Array.from(
+            this.state.processes,
+            ([_, process]) => process.frame,
+        ).filter(f => f !== undefined && f !== process.frame);
+        let frame = this.state.frames.findIndex((f, i) =>
+            f.src === undefined
+                && !ownedFrames.includes(i)
+                && i !== process.frame);
+
+        if (process.state === "working")
+            this.updateFrame(process.frame, { src: PINK });
+
+        if (frame === -1) {
+            process = { state: "ready", info: "Idle", frame: undefined };
+            if (ownedFrames.length === 0)
+                this.setState({ animation: PINK });
+        } else
+            process = { state: "working", info: "Rendering Frame " + frame, frame };
+
+        this.updateProcess(pid, process);
+
+        if (process.state === "working")
+            setTimeout(
+                () => this.runProcess(pid),
+                500 + Math.floor(Math.random() * 500));
     };
 
     onRender = (parameters) => {
-        console.log("todo");
+        this.setState({
+            frames: this.state.frames.map(() => ({})),
+            processes: new Map(Array.from(this.state.processes, p => ({...p, state: "ready", info: "Idle"}))),
+        }, () => {
+            for (const pid of this.state.processes.keys())
+                this.runProcess(pid);
+        });
     };
 
     onAdd = () => {
