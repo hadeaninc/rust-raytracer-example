@@ -18,6 +18,7 @@ header {
 .output .animation {
     display: flex;
     width: 100%;
+    max-height: 30rem;
     margin-bottom: 10px;
 }
 .output .animation:before {
@@ -26,15 +27,16 @@ header {
     padding-top: 50%;
 }
 .output .frames {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(32px, 1fr));
+    grid-gap: 2px;
     width: 100%;
-    justify-content: flex-start;
 }
 .output .frames * {
     border: 1px solid black;
     width: 32px;
     margin-right: 5px;
+    margin-bottom: 5px;
 }
 
 .input .btn-group { width: 100%; }

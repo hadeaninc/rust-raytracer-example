@@ -1,10 +1,16 @@
 const GREY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR42mM88Z+BAQAGJwHJ3qipmgAAAABJRU5ErkJggg==";
 const PINK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEElEQVR42mP8z/D/PwMQAAAS/wL/eBxg8AAAAABJRU5ErkJggg==";
 
-let Process = ({onKill, children: {pid, info, state}}) =>
+let Process = ({onKill, children: {pid, info, state, frame}}) =>
 <li key={pid} className={state + " process"}>
     <div>
-        <div className="info">{info}</div>
+        <div className="info">{
+            state === "error" ? "Error: " + info :
+            state === "ready" ? "Idle" :
+            state === "working" ? "Rendering Frame " + frame :
+            state === "pending" ? "Spawning..." :
+            false
+        }</div>
         {["error", "ready"].includes(state) &&
          <button type="button" onClick={onKill}>×</button>
         }
@@ -84,7 +90,7 @@ class App extends React.Component {
         this.processes = new Map();
         this.state = {
             animation: GREY,
-            frames: [{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}],
+            frames: [...Array(100).keys()].map(() => ({})),
             parameters: new Map([
                 [ "height", { label: "Height (pixels)", value: 180 } ],
                 [ "width", { label: "Width (pixels)", value: 320 } ],
@@ -92,9 +98,6 @@ class App extends React.Component {
                 [ "samples_per_pixel", { label: "Samples per pixel", value: 32 } ],
             ]),
             processes: new Map([
-                // [ "1", { state: "working", info: "Rendering Frame 10", frame: 10 } ],
-                // [ "2", { state: "ready", info: "Idle" } ],
-                // [ "3", { state: "error", info: "Spawn Resources Unavailable" } ],
             ]),
         };
     }
@@ -148,11 +151,11 @@ class App extends React.Component {
             this.updateFrame(process.frame, { src: PINK });
 
         if (frame === -1) {
-            process = { state: "ready", info: "Idle", frame: undefined };
+            process = { state: "ready", frame: undefined };
             if (ownedFrames.length === 0)
                 this.setState({ animation: PINK });
         } else
-            process = { state: "working", info: "Rendering Frame " + frame, frame };
+            process = { state: "working", frame };
 
         this.updateProcess(pid, process);
 
@@ -164,8 +167,9 @@ class App extends React.Component {
 
     onRender = (parameters) => {
         this.setState({
+            animation: GREY,
             frames: this.state.frames.map(() => ({})),
-            processes: new Map(Array.from(this.state.processes, p => ({...p, state: "ready", info: "Idle"}))),
+            processes: new Map(Array.from(this.state.processes, p => ({...p, state: "ready"}))),
         }, () => {
             for (const pid of this.state.processes.keys())
                 this.runProcess(pid);
@@ -177,13 +181,13 @@ class App extends React.Component {
 
         this.setState({
             processes: new Map([
-                [pid, { state: "pending", info: "Spawning..." }],
+                [pid, { state: "pending" }],
                 ...this.state.processes,
             ]),
         });
 
         setTimeout(() => {
-            this.updateProcess(pid, { state: "ready", info: "Idle" });
+            this.updateProcess(pid, { state: "ready" });
         }, 2000);
     }
 
