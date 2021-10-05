@@ -84,21 +84,28 @@ let Output = ({animation = GREY, children}) =>
     </div>
 </section>
 
+function blobToDataUri(blob, callback) {
+    var a = new FileReader();
+    a.onload = e => callback(e.target.result);
+    a.readAsDataURL(blob);
+}
+
 class App extends React.Component {
     constructor(props) {
         super(props);
-        this.processes = new Map();
+        this.socket = new WebSocket("ws://" + location.host + "/ws");
+        this.socket.onmessage = this.onMessage;
+        this.awaiting = null;
         this.state = {
             animation: GREY,
-            frames: [...Array(100).keys()].map(() => ({})),
+            frames: Array(100).fill(null).map(() => ({})),
             parameters: new Map([
                 [ "height", { label: "Height (pixels)", value: 180 } ],
                 [ "width", { label: "Width (pixels)", value: 320 } ],
                 [ "total_frames", { label: "Total frames", value: 40 } ],
                 [ "samples_per_pixel", { label: "Samples per pixel", value: 32 } ],
             ]),
-            processes: new Map([
-            ]),
+            processes: new Map(),
         };
     }
 
@@ -115,7 +122,47 @@ class App extends React.Component {
         </section>
     </main>;
 
+    onMessage = (msg) => {
+        if (typeof msg.data === "string") {
+            let message = JSON.parse(msg.data);
+            console.log("message", message);
+            if (message.hasOwnProperty("job"))
+                this.setState({
+                    parameters: new Map(message.job_fields.map(([name, type]) => [name, {
+                        // we could do with a proper `label` field here
+                        label: name,
+                        value: message.job[name]
+                            || {"integer": 0, "float": 0, "string": ""}[type],
+                    }])),
+                    frames: Array(message.job.total_frames).fill(null).map(() => ({})),
+                });
+            else if (message.hasOwnProperty("pool"))
+                this.setState({ pool: message.pool });
+            else if (message.hasOwnProperty("frame"))
+                this.awaiting = message.frame;
+            else if (message.hasOwnProperty("gif"))
+                this.awaiting = "gif";
+        } else if (msg.data instanceof Blob) {
+            let awaiting = this.awaiting;
+            this.awaiting = null;
+            console.log("binary message; awaiting:", awaiting);
+            if (awaiting === null)
+                console.log("not expecting a binary message");
+            else blobToDataUri(msg.data, uri => {
+                if (awaiting === "gif") {
+                    console.log("updating animation");
+                    this.setState({ animation: uri });
+                }
+                else if (typeof awaiting === "number")
+                    this.updateFrame(awaiting, { src: uri });
+                else
+                    console.log("unexpected value for `awaiting`", awaiting);
+            });
+        } else console.log("unexpected message type", msg);
+    };
+
     updateFrame = (id, frame) => {
+        console.log("updating frame", id);
         this.setState(s => ({
             frames: s.frames.map(
                 (frame_, id_) => id == id_
