@@ -1,15 +1,14 @@
-const GREY = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR42mM88Z+BAQAGJwHJ3qipmgAAAABJRU5ErkJggg==";
-const PINK = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAEElEQVR42mP8z/D/PwMQAAAS/wL/eBxg8AAAAABJRU5ErkJggg==";
+const GREY_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAQAAABeK7cBAAAADUlEQVR42mM88Z+BAQAGJwHJ3qipmgAAAABJRU5ErkJggg==";
 
 let Process = ({onKill, children: {pid, info, state, frame}}) =>
 <li key={pid} className={state + " process"}>
     <div>
         <div className="info">{
             state === "error" ? "Error: " + info :
-            state === "ready" ? "Idle" :
-            state === "working" ? "Rendering Frame " + frame :
-            state === "pending" ? "Spawning..." :
-            false
+                state === "ready" ? "Idle" :
+                state === "working" ? "Rendering Frame " + frame :
+                state === "pending" ? "Spawning..." :
+                false
         }</div>
         {["error", "ready"].includes(state) &&
          <button type="button" onClick={onKill}>×</button>
@@ -26,15 +25,15 @@ let Processes = ({onAdd, onKill, children: processes}) =>
                 <button type="button" onClick={onAdd}>+</button>
             </div>
         </li>
-        {Array.from(processes, ([pid, process]) => {
-            return <Process key={pid} onKill={() => onKill(pid)}>
+        {Object.entries(processes).map(([pid, process]) =>
+            <Process key={pid} onKill={() => onKill(pid)}>
                 {process}
             </Process>
-        })}
+        )}
     </ul>
 </section>;
 
-let Parameters = ({onRender, ready, children: parameters}) =>
+let Parameters = ({onRender, onChange, ready, children: parameters}) =>
 <section>
     <h2>Parameters</h2>
 
@@ -54,7 +53,8 @@ let Parameters = ({onRender, ready, children: parameters}) =>
                       className="form-control"
                       type={type}
                       name={name}
-                      defaultValue={value}
+                      value={"" + value}
+                      onChange={onChange}
                   />
               </div>;
     })}
@@ -63,7 +63,7 @@ let Parameters = ({onRender, ready, children: parameters}) =>
         <button
             type="button"
             className="btn btn-primary"
-            onClick={() => onRender(parameters)}
+            onClick={onRender}
         >Render</button>
         <button
             type="button"
@@ -73,13 +73,13 @@ let Parameters = ({onRender, ready, children: parameters}) =>
     </div>
 </section>;
 
-let Output = ({animation = GREY, children}) =>
+let Output = ({animation = GREY_URI, children}) =>
 <section className="output order-1 order-lg-2 col-lg-8">
     <h2>Output</h2>
     <img className="animation" src={animation} />
     <div className="frames">
         {children.map((frame, index) =>
-            <img key={index} className="frame" src={frame.src || GREY} />
+            <img key={index} className={"frame frame" + index} src={frame.src || GREY_URI} />
         )}
     </div>
 </section>
@@ -93,19 +93,20 @@ function blobToDataUri(blob, callback) {
 class App extends React.Component {
     constructor(props) {
         super(props);
-        this.socket = new WebSocket("ws://" + location.host + "/ws");
+        this.socket = props.children;
         this.socket.onmessage = this.onMessage;
         this.awaiting = null;
         this.state = {
-            animation: GREY,
-            frames: Array(100).fill(null).map(() => ({})),
+            animation: GREY_URI,
+            frames: Array(100).fill().map(() => ({})),
             parameters: new Map([
                 [ "height", { label: "Height (pixels)", value: 180 } ],
                 [ "width", { label: "Width (pixels)", value: 320 } ],
                 [ "total_frames", { label: "Total frames", value: 40 } ],
                 [ "samples_per_pixel", { label: "Samples per pixel", value: 32 } ],
             ]),
-            processes: new Map(),
+            processes: {},
+            ready: false,
         };
     }
 
@@ -113,9 +114,11 @@ class App extends React.Component {
     <main className="row">
         <Output animation={this.state.animation}>{this.state.frames}</Output>
         <section className="input order-2 order-lg-1 col-lg-4">
-            <Parameters onRender={this.onRender}>
-                {this.state.parameters}
-            </Parameters>
+            <Parameters
+                onRender={this.onRender}
+                onChange={this.onParameterChange}
+                ready={this.state.ready}
+            >{this.state.parameters}</Parameters>
             <Processes onAdd={this.onAdd} onKill={this.onKill}>
                 {this.state.processes}
             </Processes>
@@ -125,7 +128,6 @@ class App extends React.Component {
     onMessage = (msg) => {
         if (typeof msg.data === "string") {
             let message = JSON.parse(msg.data);
-            console.log("message", message);
             if (message.hasOwnProperty("job"))
                 this.setState({
                     parameters: new Map(message.job_fields.map(([name, type]) => [name, {
@@ -134,10 +136,10 @@ class App extends React.Component {
                         value: message.job[name]
                             || {"integer": 0, "float": 0, "string": ""}[type],
                     }])),
-                    frames: Array(message.job.total_frames).fill(null).map(() => ({})),
+                    frames: Array(message.job.total_frames).fill().map(() => ({})),
                 });
-            else if (message.hasOwnProperty("pool"))
-                this.setState({ pool: message.pool });
+            else if (message.hasOwnProperty("processes"))
+                this.setState({ processes: message.processes });
             else if (message.hasOwnProperty("frame"))
                 this.awaiting = message.frame;
             else if (message.hasOwnProperty("gif"))
@@ -145,104 +147,74 @@ class App extends React.Component {
         } else if (msg.data instanceof Blob) {
             let awaiting = this.awaiting;
             this.awaiting = null;
-            console.log("binary message; awaiting:", awaiting);
             if (awaiting === null)
                 console.log("not expecting a binary message");
-            else blobToDataUri(msg.data, uri => {
-                if (awaiting === "gif") {
-                    console.log("updating animation");
-                    this.setState({ animation: uri });
-                }
-                else if (typeof awaiting === "number")
-                    this.updateFrame(awaiting, { src: uri });
-                else
-                    console.log("unexpected value for `awaiting`", awaiting);
-            });
+            else blobToDataUri(msg.data, uri =>
+                awaiting === "gif" ? this.setState({ animation: uri, ready: true })
+                    : typeof awaiting === "number" ? this.updateFrame(awaiting, { src: uri })
+                    : console.log("unexpected value for `awaiting`", awaiting));
         } else console.log("unexpected message type", msg);
     };
 
     updateFrame = (id, frame) => {
-        console.log("updating frame", id);
         this.setState(s => ({
             frames: s.frames.map(
-                (frame_, id_) => id == id_
+                (frame_, id_) => id === id_
                     ? { ...frame_, ...frame }
-                    : frame_,
+                    : frame_
             ),
         }));
     };
 
     updateProcess = (id, process) => {
         this.setState(s => ({
-            processes: new Map(Array.from(
-                s.processes,
-                ([id_, process_]) => id !== id_
-                    ? [id_, process_]
-                    : [id_, { ...process_, ...process }],
-            )),
+            processes: {
+                ...s.processes,
+                [id]: {...(s.processes[id] || {}), ...process },
+            },
         }));
     };
 
-    runProcess = (pid) => {
-        let process = { ...this.state.processes.get(pid) };
-        let ownedFrames = Array.from(
-            this.state.processes,
-            ([_, process]) => process.frame,
-        ).filter(f => f !== undefined && f !== process.frame);
-        let frame = this.state.frames.findIndex((f, i) =>
-            f.src === undefined
-                && !ownedFrames.includes(i)
-                && i !== process.frame);
-
-        if (process.state === "working")
-            this.updateFrame(process.frame, { src: PINK });
-
-        if (frame === -1) {
-            process = { state: "ready", frame: undefined };
-            if (ownedFrames.length === 0)
-                this.setState({ animation: PINK });
-        } else
-            process = { state: "working", frame };
-
-        this.updateProcess(pid, process);
-
-        if (process.state === "working")
-            setTimeout(
-                () => this.runProcess(pid),
-                500 + Math.floor(Math.random() * 500));
+    updateParameter = (name, value) => {
+        this.setState(s => ({
+            parameters: new Map([
+                ...s.parameters.entries(),
+                [name, { ...s.parameters.get(name), value }],
+            ]),
+        }));
     };
 
-    onRender = (parameters) => {
-        this.setState({
-            animation: GREY,
-            frames: this.state.frames.map(() => ({})),
-            processes: new Map(Array.from(this.state.processes, p => ({...p, state: "ready"}))),
-        }, () => {
-            for (const pid of this.state.processes.keys())
-                this.runProcess(pid);
+    onRender = () => {
+        this.setState(s => ({
+            animation: GREY_URI,
+            frames: Array(s.parameters.get("total_frames").value).fill().map(() => ({})),
+            ready: false,
+        }), () => {
+            this.socket.send(JSON.stringify(Object.fromEntries(
+                Array.from(this.state.parameters.entries(), ([k, v]) => [k, v.value])
+            )));
         });
     };
 
     onAdd = () => {
-        let pid = Math.max(0, ...this.state.processes.keys()) + 1;
+        this.socket.send(JSON.stringify({ add_process: null }));
+    };
 
-        this.setState({
-            processes: new Map([
-                [pid, { state: "pending" }],
-                ...this.state.processes,
-            ]),
-        });
-
-        setTimeout(() => {
-            this.updateProcess(pid, { state: "ready" });
-        }, 2000);
-    }
+    onParameterChange = (event) => {
+        let value = event.target.type === "number"
+            ? parseFloat(event.target.value)
+            : event.target.value;
+        this.updateParameter(event.target.name, value);
+    };
 
     onKill = (pid) => {
-        let processes = new Map(this.state.processes);
-        processes.delete(pid);
-        this.setState({ processes });
-    }
+        this.socket.send(JSON.stringify({ kill_process: pid }));
+        this.setState({ ...this.state.processes, [pid]: undefined });
+    };
 }
 
-ReactDOM.render(<App />, document.getElementById("app"));
+ReactDOM.render(<App>{
+    location.protocol === "file:"
+        ? new MockSocket()
+        : new WebSocket("ws://" + location.host + "/ws")
+}</App>, document.getElementById("app"));
