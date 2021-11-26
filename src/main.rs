@@ -328,7 +328,7 @@ mod window {
         (y * image_width + x) as usize
     }
 
-    pub fn main(out_file: Option<&str>) {
+    pub fn main(out_file: Option<PathBuf>, cpus: usize) {
         const WIDTH: usize = 1280;
         const HEIGHT: usize = 720;
         const SAMPLES_PER_PIXEL: u32 = 128;

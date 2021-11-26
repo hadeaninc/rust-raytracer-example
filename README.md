@@ -24,6 +24,8 @@ Makes use of:
 
 `cargo run --release --features gui -- window` to run the windowed GUI on a single machine.
 
+Note - if you are running under WSL, you will need to ensure that you have an X-server running. You also may need to get `gcc`, `g++` and `pkg-config` from your package manager.
+
 # Running with Hadean
 
 Hadean allows you to run your application locally or distributed on the cloud, with no recompilation. First you need the [Hadean SDK](https://docs.hadean.com/platform/). Once you've got it:
