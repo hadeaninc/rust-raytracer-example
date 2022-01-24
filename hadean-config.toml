@@ -12,6 +12,7 @@ memory = "8 MiB"
 # Hadean SDK
 tracing_enabled = false
 debugging_enabled = false
+metrics_enabled = false
 
 [cluster]
 # The number of machines to allocate in preparation for scaling up.
