@@ -24,3 +24,12 @@ standby_machines = 2
 # The time (in seconds) after which all standby machines will be
 # deallocated after an application has stopped.
 machines_timeout = 3600
+
+[[inbound-rules]]
+# Inbound firewall rules that specify ports and protocols you want to have open.
+# This rule would open ports 80, 443, and 8080 through 8100 for TCP.
+ports    = "28888"
+protocol = "TCP"
+# The source CIDR block specifies where the traffic is allowd to come from.
+# 0.0.0.0/0 is all IPv4 traffic from anywhere on the internet.
+source   = "0.0.0.0/0"
