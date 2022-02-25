@@ -27,7 +27,8 @@ machines_timeout = 3600
 
 [[inbound-rules]]
 # Inbound firewall rules that specify ports and protocols you want to have open.
-# This rule would open ports 80, 443, and 8080 through 8100 for TCP.
+# The rule below opens port 28888 for TCP connections, which will allow you to 
+# access the application from your browser
 ports    = "28888"
 protocol = "TCP"
 # The source CIDR block specifies where the traffic is allowd to come from.
