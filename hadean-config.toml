@@ -14,18 +14,19 @@ tracing_enabled = false
 debugging_enabled = false
 metrics_enabled = false
 
-[cluster]
+[cloud-scaling]
 # The number of machines to allocate in preparation for scaling up.
 # 0  = always allocate just in time and scale down immediately
 # 1  = keep a VM around between runs that makes rapid iteration easier
 # 2+ = keep n VMs around between runs and always keep n-1 VMs on hand
 #      ready to use while your application is scaling
 standby_machines = 2
+machines_limit = 10
 # The time (in seconds) after which all standby machines will be
 # deallocated after an application has stopped.
 machines_timeout = 3600
 
-[[inbound-rules]]
+[[cloud-scaling.inbound-rules]]
 # Inbound firewall rules that specify ports and protocols you want to have open.
 # The rule below opens port 28888 for TCP connections, which will allow you to 
 # access the application from your browser
